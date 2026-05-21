@@ -1,109 +1,207 @@
 <div align="center">
 
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*vPJ1Xag-f3cgOgSA4QTeXQ.png" alt="Production-Grade MCP Server + Agentic System" width="100%"/>
+<br/>
 
-# 🏛️ Production-Grade MCP Server + Agentic System
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*vPJ1Xag-f3cgOgSA4QTeXQ.png" alt="Atlas MCP — Production-Grade MCP Server" width="100%"/>
 
-### *A reference implementation of an MCP server designed to actually ship*
+<br/><br/>
 
-*Multi-tenant · Authenticated · Observable · Rate-limited · Cached · Circuit-broken · Governed*
+# Atlas MCP
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-c15f3c.svg?style=for-the-badge)](https://www.python.org/downloads/)
-[![MCP 2026](https://img.shields.io/badge/MCP-2026-b1ada1.svg?style=for-the-badge)](https://modelcontextprotocol.io)
-[![License: MIT](https://img.shields.io/badge/License-MIT-c15f3c.svg?style=for-the-badge)](./LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-Compose-b1ada1.svg?style=for-the-badge&logo=docker)](https://docs.docker.com/compose/)
+### Production-Grade Model Context Protocol Server + Agentic System
+
+*The reference implementation that actually ships — not another hello-world demo.*
+
+<br/>
+
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![MCP 2026](https://img.shields.io/badge/MCP-2026-6B46C1?style=for-the-badge)](https://modelcontextprotocol.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](./LICENSE)
+[![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-Enabled-F5A623?style=for-the-badge)](https://opentelemetry.io/)
+[![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)](https://prometheus.io/)
+
+<br/>
+
+> **Multi-tenant · OAuth 2.1 · Rate-limited · Circuit-broken · Cached · Observable · Policy-governed**
+
+<br/>
 
 ---
 
-### 📖 Full Step-by-Step Blog Walkthrough
-
-This repository is the companion codebase for a long-form blog post that walks through every single component end to end, with every line of code explained in context. **Start there if you want to understand the "why" behind the architecture before reading the code.**
-
-### 🔗 [**Building a Production-Grade MCP Server Architecture with Agentic System →**](https://medium.com/@fareedkhandev/building-a-production-grade-mcp-server-architecture-with-agentic-system-de92127aca6f)
+### 📖 This repo is the companion codebase for a long-form engineering deep-dive.
+### **[→ Read the full blog walkthrough on Medium](https://medium.com/@fareedkhandev/building-a-production-grade-mcp-server-architecture-with-agentic-system-de92127aca6f)**
+*Every component, every design decision, every line of code — explained in full.*
 
 ---
 
 </div>
 
-## 🎯 What This Is
+<br/>
 
-Most MCP tutorials end with a `@tool` decorator that returns `"hello world"`. That is fine for a demo. It is not what ships.
+## 🎯 The Problem This Solves
 
-This repository is a **reference implementation of an MCP server designed to run in production**: multi-tenant, authenticated, observable, rate-limited, cached, circuit-broken, and governed. It exposes a company's heterogeneous data layer (Postgres, Elasticsearch, S3, vector DB) to AI agents as a single, secure tool surface, and ships with a **four-agent support copilot** (Planner → Retriever → Synthesizer → Critic) that uses it end to end.
+Every MCP tutorial ends at the `@tool` decorator returning `"hello world"`.
 
-The codebase is deliberately organised around **twelve components** that keep showing up on the 3 AM pager when teams skip them. Each one lives in its own module and can be read, replaced, or extended independently.
+That's fine for a prototype. It's not what runs at 3 AM when your auth service goes down, a tenant leaks into another's data, the vector DB is timing out, and your agent is hammering the rate limit.
+
+**Atlas MCP is the bridge between "it works locally" and "it runs in production."** It exposes a company's full heterogeneous data layer — Postgres, Elasticsearch, S3, vector DB — to AI agents as a single, secure, observable tool surface. Twelve production concerns are solved up front, each in its own module, each independently replaceable.
+
+It ships with a **four-agent support copilot** (Planner → Retriever → Synthesizer → Critic) that exercises every component end to end, so you can see the whole system working before you swap in your own domain logic.
+
+<br/>
 
 ---
 
-## 🏗️ Architecture Overview
+## 🏗️ Architecture
 
 <div align="center">
 
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*vPJ1Xag-f3cgOgSA4QTeXQ.png" alt="Full Architecture" width="90%"/>
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*vPJ1Xag-f3cgOgSA4QTeXQ.png" alt="Full System Architecture" width="90%"/>
 
-*The complete production-grade system: MCP server dispatch pipeline on the right, four-agent orchestrator on the left, data plane on top, observability on the bottom, identity and governance as crosscutting concerns.*
+<sub>The complete system: MCP dispatch pipeline (right) · Four-agent orchestrator (left) · Data plane (top) · Observability (bottom) · Identity and governance as crosscutting concerns</sub>
 
 </div>
 
----
-
-## 🧩 The 12 Components
-
-| # | Component | Lives in | What it gives you |
-|---|-----------|----------|-------------------|
-| 1 | 🚪 **Transport & Session Layer** | `server.py` | stdio for local, Streamable HTTP for remote, horizontal-scale-friendly sessions |
-| 2 | 🔐 **Authentication Server** | `auth/oauth.py` | OAuth 2.1 + PKCE, short-lived JWTs, JWKS validation |
-| 3 | ⚖️ **Authorization & Policy Engine** | `auth/policy.py` | Tool-level RBAC, tenant-scoped ABAC, deny-by-default |
-| 4 | 📚 **Tool Registry & Discovery** | `tools/registry.py` | Dynamic toolsets, `.well-known` capability metadata |
-| 5 | ✅ **Input Validation Layer** | `validation/schemas.py` | Pydantic schemas, enum constraints, agent-adversarial input as default threat model |
-| 6 | 🔧 **Tool Execution Engine** | `tools/base.py` | Three-level hierarchy (atomic / composed / workflow) |
-| 7 | 🔄 **Circuit Breaker & Retry** | `reliability/` | Closed → open → half-open, Adaptive Timeout Budget Allocation |
-| 8 | 🚦 **Rate Limiting & Quotas** | `ratelimit/limiter.py` | Redis token-bucket (Lua-atomic), per-tenant and per-tool |
-| 9 | ⚡ **Caching Layer** | `cache/manager.py` | Two-tier (L1 in-process, L2 Redis), stampede prevention |
-| 10 | 🧱 **Structured Error Framework** | `errors/framework.py` | Machine-readable errors with `retryable` and `hint` fields |
-| 11 | 🔭 **Observability Stack** | `observability/` | OpenTelemetry traces, Prometheus metrics, audit logs |
-| 12 | 🛡️ **Governance & Multi-Tenancy** | `governance/` | Tenant isolation, approval gates, outbound HTTP allowlisting |
+<br/>
 
 ---
 
-## 📖 Diving Deeper, Section by Section
+## 🧩 Twelve Production Components
 
-Each diagram below links back to the corresponding section in the blog, where every line of code is walked through in detail.
+> These are the twelve things that keep showing up on the pager when teams skip them. Each one lives in its own module, fully decoupled.
+
+<br/>
+
+<table>
+<thead>
+<tr>
+<th align="center">№</th>
+<th>Component</th>
+<th>Module</th>
+<th>What It Gives You</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><b>01</b></td>
+<td>🚪 <b>Transport & Session Layer</b></td>
+<td><code>server.py</code></td>
+<td>stdio for local, Streamable HTTP for remote; horizontally scalable sessions with full middleware chain</td>
+</tr>
+<tr>
+<td align="center"><b>02</b></td>
+<td>🔐 <b>Authentication Server</b></td>
+<td><code>auth/oauth.py</code></td>
+<td>OAuth 2.1 + PKCE flow, short-lived JWTs, JWKS endpoint validation — drop in your own provider</td>
+</tr>
+<tr>
+<td align="center"><b>03</b></td>
+<td>⚖️ <b>Authorization & Policy Engine</b></td>
+<td><code>auth/policy.py</code></td>
+<td>Tool-level RBAC, tenant-scoped ABAC, YAML-driven rules, deny-by-default posture</td>
+</tr>
+<tr>
+<td align="center"><b>04</b></td>
+<td>📚 <b>Tool Registry & Discovery</b></td>
+<td><code>tools/registry.py</code></td>
+<td>Dynamic toolset registration, <code>.well-known</code> capability metadata endpoint, runtime hot-swap</td>
+</tr>
+<tr>
+<td align="center"><b>05</b></td>
+<td>✅ <b>Input Validation Layer</b></td>
+<td><code>validation/schemas.py</code></td>
+<td>Pydantic v2 schemas, strict enum constraints — agent-adversarial input is the default threat model</td>
+</tr>
+<tr>
+<td align="center"><b>06</b></td>
+<td>🔧 <b>Tool Execution Engine</b></td>
+<td><code>tools/base.py</code></td>
+<td>Three-level hierarchy: Atomic (one backend) → Composed (deterministic chains) → Workflow (multi-step)</td>
+</tr>
+<tr>
+<td align="center"><b>07</b></td>
+<td>🔄 <b>Circuit Breaker & Retry</b></td>
+<td><code>reliability/</code></td>
+<td>Closed → Open → Half-open state machine per tool; Adaptive Timeout Budget Allocation (ATBA)</td>
+</tr>
+<tr>
+<td align="center"><b>08</b></td>
+<td>🚦 <b>Rate Limiting & Quotas</b></td>
+<td><code>ratelimit/limiter.py</code></td>
+<td>Redis token-bucket (Lua-atomic), per-tenant <em>and</em> per-tool granularity, burst headroom config</td>
+</tr>
+<tr>
+<td align="center"><b>09</b></td>
+<td>⚡ <b>Caching Layer</b></td>
+<td><code>cache/manager.py</code></td>
+<td>Two-tier cache (L1 in-process LRU, L2 Redis), thundering-herd / stampede prevention</td>
+</tr>
+<tr>
+<td align="center"><b>10</b></td>
+<td>🧱 <b>Structured Error Framework</b></td>
+<td><code>errors/framework.py</code></td>
+<td>Machine-readable SERF errors with <code>retryable</code>, <code>hint</code>, and MCP-level payload fields</td>
+</tr>
+<tr>
+<td align="center"><b>11</b></td>
+<td>🔭 <b>Observability Stack</b></td>
+<td><code>observability/</code></td>
+<td>OpenTelemetry distributed traces, Prometheus metrics, structured JSONL audit log — one trace ID end-to-end</td>
+</tr>
+<tr>
+<td align="center"><b>12</b></td>
+<td>🛡️ <b>Governance & Multi-Tenancy</b></td>
+<td><code>governance/</code></td>
+<td>Hard tenant isolation, human-in-the-loop approval gates, per-tenant outbound HTTP allowlisting</td>
+</tr>
+</tbody>
+</table>
+
+<br/>
+
+---
+
+## 📐 Deep Dives, Section by Section
 
 <table>
 <tr>
 <td width="50%" align="center">
 
 ### 📦 Data Persistence Layer
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*kT_lhnF50R4aM2iXXahMoA.png" alt="Data Persistence Layer" width="100%"/>
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*kT_lhnF50R4aM2iXXahMoA.png" width="100%"/>
 
-*Postgres + Row-Level Security · Tenant isolation at the DB layer*
+**PostgreSQL 16 + Row-Level Security**
+Tenant isolation enforced at the database layer. No application-level filtering that can be forgotten.
 
 </td>
 <td width="50%" align="center">
 
 ### 🚪 Transport & Session Layer
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*7GEV6AlegLbxX-dqJXHUdA.png" alt="Transport Layer" width="100%"/>
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*7GEV6AlegLbxX-dqJXHUdA.png" width="100%"/>
 
-*Dual transport · Stateless session · Middleware chain*
+**Dual Transport · Stateless Sessions**
+stdio for local tooling, Streamable HTTP for production clusters. Middleware chain is composable.
 
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
 
-### 🔐 Authentication, Policy & Governance
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*m45EPmIT1_5EmKNR4EEpLQ.png" alt="Auth & Policy" width="100%"/>
+### 🔐 Auth, Policy & Governance
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*m45EPmIT1_5EmKNR4EEpLQ.png" width="100%"/>
 
-*OAuth 2.1 · YAML policies · Human-in-the-loop approvals*
+**OAuth 2.1 · YAML Policies · Approval Gates**
+Pluggable identity providers. Policy rules are YAML — readable by humans, enforced by the engine.
 
 </td>
 <td width="50%" align="center">
 
 ### 🔧 Tool Execution Engine
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*ak49o0j_5qLbvvM-zkkF_A.png" alt="Tool Execution" width="100%"/>
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*ak49o0j_5qLbvvM-zkkF_A.png" width="100%"/>
 
-*Three-level hierarchy · Atomic · Composed · Workflow*
+**Atomic → Composed → Workflow**
+A clear three-level hierarchy prevents tools from becoming unmaintainable monoliths.
 
 </td>
 </tr>
@@ -111,17 +209,19 @@ Each diagram below links back to the corresponding section in the blog, where ev
 <td width="50%" align="center">
 
 ### 🔄 Reliability Layer
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*rjIJxzUpMhJ9BGffTczvLA.png" alt="Reliability" width="100%"/>
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*rjIJxzUpMhJ9BGffTczvLA.png" width="100%"/>
 
-*Circuit breakers · Retry with jitter · ATBA budget allocator*
+**Circuit Breakers · Retry · ATBA**
+Cascading failures are contained. Timeouts are allocated adaptively based on remaining budget.
 
 </td>
 <td width="50%" align="center">
 
 ### ⚡ Rate Limiting & Caching
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*CvfLYyppMTLyU9UalfHmyA.png" alt="Rate Limit & Cache" width="100%"/>
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*CvfLYyppMTLyU9UalfHmyA.png" width="100%"/>
 
-*Redis token bucket · Two-tier cache · Stampede lock*
+**Redis Token Bucket · Two-tier Cache**
+Atomicity guaranteed via Lua scripts. Stampede locks prevent cache-miss avalanches under load.
 
 </td>
 </tr>
@@ -129,17 +229,19 @@ Each diagram below links back to the corresponding section in the blog, where ev
 <td width="50%" align="center">
 
 ### 🔭 Observability Stack
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*dMi7KXpUfoMMsFpVTS8Acg.png" alt="Observability" width="100%"/>
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*dMi7KXpUfoMMsFpVTS8Acg.png" width="100%"/>
 
-*OpenTelemetry · Prometheus · Audit logs · One trace ID*
+**OTel Traces · Prometheus · Audit Logs**
+A single trace ID threads through every component — from the agent call to the DB query to the cache hit.
 
 </td>
 <td width="50%" align="center">
 
-### 🤖 Multi-Agentic Architecture
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*rasNhRMj5Ei93-AEQrbBwQ.png" alt="Multi-Agent" width="100%"/>
+### 🤖 Multi-Agent Architecture
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*rasNhRMj5Ei93-AEQrbBwQ.png" width="100%"/>
 
-*Four-agent design · Planner · Retriever · Synthesizer · Critic*
+**Planner · Retriever · Synthesizer · Critic**
+Responsibilities are separated cleanly. The Critic enforces quality with a single bounded revise loop.
 
 </td>
 </tr>
@@ -147,23 +249,31 @@ Each diagram below links back to the corresponding section in the blog, where ev
 
 <div align="center">
 
-### 🎼 The Orchestrator Flow
-<img src="https://miro.medium.com/v2/resize:fit:4800/1*7wyopmnCF_mEdxnI8u02uA.png" alt="Orchestrator" width="80%"/>
+### 🎼 End-to-End Orchestrator Flow
 
-*End-to-end agent orchestration with one bounded revise loop*
+<img src="https://miro.medium.com/v2/resize:fit:4800/1*7wyopmnCF_mEdxnI8u02uA.png" width="80%"/>
+
+<sub>The four-agent pipeline from raw query → retrieval plan → tool execution → draft → critique → final answer</sub>
 
 </div>
+
+<br/>
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
-- Python 3.11+ (only for running the CLI locally)
-- An OpenRouter API key (for the agent layer)
 
-### 1. Clone and Configure
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| Docker + Docker Compose | Latest | Required for the full stack |
+| Python | 3.11+ | Only needed to run the CLI locally |
+| OpenRouter API key | — | Powers the agent layer |
+
+<br/>
+
+### Step 1 — Clone and configure
 
 ```bash
 git clone https://github.com/FareedKhan-dev/production-grade-mcp-agentic-system.git
@@ -171,29 +281,37 @@ cd production-grade-mcp-agentic-system
 cp .env.example .env
 ```
 
-Edit `.env` and set at minimum:
-- `OPENROUTER_API_KEY` — for the agent layer
-- `ATLAS_AUTH_JWKS_URL` — your OAuth 2.1 provider's JWKS endpoint (or leave default for dev)
+Open `.env` and set at minimum:
 
-### 2. Bring Up the Stack
+```bash
+OPENROUTER_API_KEY=sk-or-v1-...          # Agent LLM calls
+ATLAS_AUTH_JWKS_URL=https://...          # Your OAuth 2.1 JWKS endpoint
+                                         # (leave default for local dev)
+```
+
+<br/>
+
+### Step 2 — Bring up the full stack
 
 ```bash
 docker compose up -d
 ```
 
-That brings up the full local environment:
+The following services start immediately:
 
-| Service | URL | What it is |
-|---------|-----|------------|
-| 🏛️ **MCP Server** | `http://localhost:8080/mcp` | Streamable HTTP endpoint |
+| Service | URL | Purpose |
+|---------|-----|---------|
+| 🏛️ **MCP Server** | `http://localhost:8080/mcp` | Streamable HTTP MCP endpoint |
 | 🔍 **Discovery** | `http://localhost:8080/.well-known/mcp-server` | Unauthenticated capability metadata |
 | 📊 **Metrics** | `http://localhost:8080/metrics` | Prometheus scrape target |
-| ❤️ **Health** | `http://localhost:8080/healthz` | Liveness probe |
-| 🔭 **Jaeger** | `http://localhost:16686` | Distributed tracing UI |
-| 📈 **Grafana** | `http://localhost:3000` | Metrics dashboards *(admin / admin)* |
-| 🗄️ **MinIO Console** | `http://localhost:9001` | S3-compatible storage UI |
+| ❤️ **Health** | `http://localhost:8080/healthz` | Liveness / readiness probe |
+| 🔭 **Jaeger UI** | `http://localhost:16686` | Distributed trace explorer |
+| 📈 **Grafana** | `http://localhost:3000` | Pre-built metrics dashboards *(admin / admin)* |
+| 🗄️ **MinIO Console** | `http://localhost:9001` | S3-compatible object storage UI |
 
-### 3. Run the Support Copilot CLI
+<br/>
+
+### Step 3 — Run the support copilot CLI
 
 ```bash
 pip install -e .
@@ -206,16 +324,22 @@ export OPENROUTER_API_KEY=sk-or-v1-...
 atlas-copilot "Why was the refund on order o_9002 for CUST-1001 delayed?"
 ```
 
-You will see the four agents run end-to-end, the final draft printed with `[S1][S2]` citations, and a full trace summary including token counts, tool calls, and the run_id that ties back to Jaeger.
+**What you'll see:**
+- All four agents execute in sequence with real-time output
+- The final answer is printed with `[S1]` `[S2]` inline citations
+- A run summary shows token counts, tool calls, and latency
+- The `run_id` ties back to a full distributed trace in Jaeger
 
-### 4. Connect from Claude Desktop / Cursor
+<br/>
 
-Add this to your MCP host config:
+### Step 4 — Connect from Claude Desktop or Cursor
+
+Add this block to your MCP host configuration:
 
 ```json
 {
   "mcpServers": {
-    "production-mcp": {
+    "atlas-mcp": {
       "type": "http",
       "url": "http://localhost:8080/mcp",
       "headers": {
@@ -227,168 +351,196 @@ Add this to your MCP host config:
 }
 ```
 
+<br/>
+
 ---
 
 ## 📂 Repository Structure
 
 ```
-.
-├── 📄 README.md
+atlas-mcp/
+│
 ├── 🐳 docker-compose.yml          # Full local stack: app + data + observability
-├── 🐳 Dockerfile                  # Two-stage build, non-root runtime
-├── 📜 LICENSE
-├── 📦 pyproject.toml              # Dependencies, dev tools, CLI entry points
-├── ⚙️  .env.example                # Every setting documented by component
+├── 🐳 Dockerfile                  # Two-stage build, non-root runtime user
+├── 📦 pyproject.toml              # Dependencies, dev tooling, CLI entry points
+├── ⚙️  .env.example                # Every setting documented, per component
 │
-├── 🔧 config/                     # Runtime configuration (hot-reloadable)
-│   ├── http_allowlist.yaml       # Per-tenant outbound HTTP allowlist
-│   └── policy.yaml               # YAML-driven authorization policies
+├── config/
+│   ├── http_allowlist.yaml        # Per-tenant outbound HTTP allowlist
+│   └── policy.yaml                # YAML-driven authorization policy rules
 │
-├── 🚢 deploy/                     # Deployment sidecar configs
-│   ├── otel/config.yaml          # OpenTelemetry Collector pipeline
-│   ├── prometheus/prometheus.yml # Prometheus scrape targets
-│   └── sql/init.sql              # Schema + RLS policies + seed data
+├── deploy/
+│   ├── otel/config.yaml           # OpenTelemetry Collector pipeline config
+│   ├── prometheus/prometheus.yml  # Prometheus scrape target definitions
+│   └── sql/init.sql               # Schema, RLS policies, seed data
 │
-├── 📚 docs/                       # Deep-dive documentation
-│   ├── AGENT_SYSTEM.md           # Multi-agent orchestrator internals
-│   ├── ARCHITECTURE.md           # The 12 components in detail
-│   └── DEPLOYMENT.md             # K8s, Cloudflare Workers, bare-metal
+├── docs/
+│   ├── ARCHITECTURE.md            # The 12 components in depth
+│   ├── AGENT_SYSTEM.md            # Multi-agent orchestrator internals
+│   └── DEPLOYMENT.md              # Kubernetes, Cloudflare Workers, bare-metal
 │
-├── 🧠 src/atlas_mcp/              # Main application source
-│   ├── config.py                 # Centralized typed settings
-│   ├── server.py                 # ⚡ Component 1: Transport & dispatch
-│   │
-│   ├── 🤖 agents/                 # Four-agent support copilot
-│   │   ├── planner.py            # Emits retrieval plan JSON
-│   │   ├── retriever.py          # Bounded tool-calling loop
-│   │   ├── synthesizer.py        # Drafts reply with citations
-│   │   ├── critic.py             # Approves or sends one revise
-│   │   ├── orchestrator.py       # Wires the four agents together
-│   │   ├── mcp_client.py         # Thin JSON-RPC MCP client
-│   │   ├── memory.py             # STM (Redis) + LTM (vector)
-│   │   └── cli.py                # atlas-copilot CLI entry point
-│   │
-│   ├── 🔐 auth/                   # Components 2 + 3
-│   │   ├── oauth.py              # JWT + JWKS validation
-│   │   ├── middleware.py         # Bearer token extraction
-│   │   └── policy.py             # YAML-driven policy engine
-│   │
-│   ├── 🛡️  governance/             # Component 12
-│   │   ├── tenant.py             # Tenant pinning middleware
-│   │   └── approval.py           # Human-in-the-loop gate
-│   │
-│   ├── 🔧 tools/                  # Components 4 + 6
-│   │   ├── registry.py           # In-memory tool index + discovery
-│   │   ├── base.py               # Tool abstract base + metadata
-│   │   ├── atomic/               # Level 1: one backend each
-│   │   ├── composed/             # Level 2: deterministic chains
-│   │   └── workflow/             # Level 3: multi-step procedures
-│   │
-│   ├── 🔄 reliability/            # Component 7
-│   │   ├── circuit_breaker.py    # 3-state machine per tool
-│   │   ├── retry.py              # Exponential backoff + jitter
-│   │   └── atba.py               # Adaptive Timeout Budget Allocation
-│   │
-│   ├── 🚦 ratelimit/              # Component 8
-│   │   └── limiter.py            # Redis token bucket (Lua-atomic)
-│   │
-│   ├── ⚡ cache/                   # Component 9
-│   │   └── manager.py            # L1 + L2 cache with stampede lock
-│   │
-│   ├── 🧱 errors/                 # Component 10
-│   │   └── framework.py          # Structured Error Recovery (SERF)
-│   │
-│   ├── 🔭 observability/          # Component 11
-│   │   ├── tracing.py            # OpenTelemetry spans
-│   │   ├── metrics.py            # Prometheus instruments
-│   │   └── audit.py              # Structured JSONL audit log
-│   │
-│   └── ✅ validation/             # Component 5
-│       └── schemas.py            # Tool call envelope
-│
-└── 🧪 tests/                      # Narrow tests, load-bearing properties
-    ├── test_circuit_breaker.py   # State machine transitions
-    ├── test_errors.py            # SERF wire format + retry semantics
-    └── test_policy.py            # Deny-beats-allow + default-deny
+└── src/atlas_mcp/
+    │
+    ├── server.py                  # ⚡ Component 1 — Transport & dispatch
+    ├── config.py                  # Centralized, typed settings (Pydantic Settings)
+    │
+    ├── agents/                    # ── Four-agent support copilot ──────────────
+    │   ├── planner.py             # Emits structured retrieval plan JSON
+    │   ├── retriever.py           # Bounded tool-calling loop with budget
+    │   ├── synthesizer.py         # Drafts reply with inline citations
+    │   ├── critic.py              # Approves or issues a single revise signal
+    │   ├── orchestrator.py        # Wires the four agents together
+    │   ├── mcp_client.py          # Thin JSON-RPC client for the MCP server
+    │   ├── memory.py              # STM (Redis) + LTM (Qdrant vector)
+    │   └── cli.py                 # atlas-copilot CLI entry point
+    │
+    ├── auth/                      # ── Components 2 + 3 ────────────────────────
+    │   ├── oauth.py               # JWT decoding + JWKS validation
+    │   ├── middleware.py          # Bearer token extraction from headers
+    │   └── policy.py              # YAML-driven RBAC / ABAC policy engine
+    │
+    ├── governance/                # ── Component 12 ────────────────────────────
+    │   ├── tenant.py              # Tenant pinning + isolation middleware
+    │   └── approval.py            # Human-in-the-loop approval gate
+    │
+    ├── tools/                     # ── Components 4 + 6 ────────────────────────
+    │   ├── registry.py            # In-memory index + .well-known endpoint
+    │   ├── base.py                # Abstract tool base class + metadata schema
+    │   ├── atomic/                # Level 1 — one backend call per tool
+    │   ├── composed/              # Level 2 — deterministic multi-step chains
+    │   └── workflow/              # Level 3 — full multi-step procedures
+    │
+    ├── reliability/               # ── Component 7 ─────────────────────────────
+    │   ├── circuit_breaker.py     # 3-state machine (closed / open / half-open)
+    │   ├── retry.py               # Exponential backoff with full jitter
+    │   └── atba.py                # Adaptive Timeout Budget Allocation
+    │
+    ├── ratelimit/                 # ── Component 8 ─────────────────────────────
+    │   └── limiter.py             # Redis token bucket, Lua-atomic operations
+    │
+    ├── cache/                     # ── Component 9 ─────────────────────────────
+    │   └── manager.py             # L1 (in-process LRU) + L2 (Redis) + stampede lock
+    │
+    ├── errors/                    # ── Component 10 ────────────────────────────
+    │   └── framework.py           # SERF: Structured Error Recovery Framework
+    │
+    ├── observability/             # ── Component 11 ────────────────────────────
+    │   ├── tracing.py             # OpenTelemetry span instrumentation
+    │   ├── metrics.py             # Prometheus counter / histogram / gauge setup
+    │   └── audit.py               # Structured JSONL append-only audit log
+    │
+    └── validation/                # ── Component 5 ─────────────────────────────
+        └── schemas.py             # Tool call envelope schema (Pydantic v2)
 ```
+
+<br/>
 
 ---
 
-## 🎨 Tech Stack
+## 🎨 Technology Stack
 
-| Layer | Technology |
-|-------|-----------|
-| **Language** | Python 3.11+ |
-| **Web framework** | Starlette + Uvicorn |
-| **MCP SDK** | `mcp>=1.2.0` |
-| **Auth** | PyJWT + Authlib (OAuth 2.1 resource server) |
-| **Validation** | Pydantic v2 + Pydantic Settings |
-| **Database** | asyncpg (PostgreSQL 16 with RLS) |
-| **Search** | Elasticsearch 8 (async client) |
-| **Vector DB** | Qdrant |
-| **Object storage** | aioboto3 (MinIO / S3) |
-| **Cache + queues** | Redis 7 (`redis[hiredis]`) |
-| **Reliability** | tenacity (retries) + custom breaker + custom ATBA |
-| **Tracing** | OpenTelemetry SDK + OTLP exporter |
-| **Metrics** | prometheus_client |
-| **Logging** | structlog (JSON) |
-| **LLM** | OpenRouter (DeepSeek) |
+<table>
+<thead>
+<tr><th>Layer</th><th>Technology</th><th>Why This Choice</th></tr>
+</thead>
+<tbody>
+<tr><td><b>Language</b></td><td>Python 3.11+</td><td>Async-first, ecosystem fit, asyncio improvements in 3.11</td></tr>
+<tr><td><b>Web Framework</b></td><td>Starlette + Uvicorn</td><td>Lightweight ASGI, middleware composability, no ORM opinions</td></tr>
+<tr><td><b>MCP SDK</b></td><td><code>mcp &gt;= 1.2.0</code></td><td>Official SDK, Streamable HTTP transport support</td></tr>
+<tr><td><b>Auth</b></td><td>PyJWT + Authlib</td><td>OAuth 2.1 resource server with JWKS validation and PKCE support</td></tr>
+<tr><td><b>Validation</b></td><td>Pydantic v2 + Pydantic Settings</td><td>Strict type enforcement, schema generation, settings management</td></tr>
+<tr><td><b>Database</b></td><td>asyncpg + PostgreSQL 16</td><td>Row-Level Security, async driver, native JSON ops</td></tr>
+<tr><td><b>Search</b></td><td>Elasticsearch 8 (async)</td><td>Full-text + vector hybrid search in a single index</td></tr>
+<tr><td><b>Vector DB</b></td><td>Qdrant</td><td>High-performance ANN, payload filtering, tenant namespacing</td></tr>
+<tr><td><b>Object Storage</b></td><td>aioboto3 (MinIO / S3)</td><td>S3-compatible; swap MinIO for AWS S3 with zero code changes</td></tr>
+<tr><td><b>Cache + State</b></td><td>Redis 7 + hiredis</td><td>Token buckets, L2 cache, STM memory, stampede locks</td></tr>
+<tr><td><b>Retry / Reliability</b></td><td>tenacity + custom ATBA</td><td>Declarative retry policy; custom budget allocator for timeout governance</td></tr>
+<tr><td><b>Tracing</b></td><td>OpenTelemetry SDK + OTLP</td><td>Vendor-neutral; export to Jaeger locally, any backend in production</td></tr>
+<tr><td><b>Metrics</b></td><td>prometheus_client</td><td>Industry standard; Grafana dashboards included</td></tr>
+<tr><td><b>Logging</b></td><td>structlog (JSON)</td><td>Structured output, zero-cost log levels, SIEM-friendly</td></tr>
+<tr><td><b>LLM</b></td><td>OpenRouter → DeepSeek</td><td>Model-agnostic routing; swap model string to change providers</td></tr>
+</tbody>
+</table>
+
+<br/>
 
 ---
 
 ## 🧪 Testing
 
-The test suite is deliberately narrow, covering the three load-bearing safety properties:
+The test suite is intentionally narrow — it covers the **three load-bearing safety properties** that must never regress:
 
 ```bash
 pip install -e ".[dev]"
 pytest -v
 ```
 
-- **`test_circuit_breaker.py`** — state machine transitions, retryable vs deterministic error classification
-- **`test_errors.py`** — SERF wire format, retry semantics, MCP-level error data
-- **`test_policy.py`** — default-deny, deny-beats-allow, glob matching, PII condition blocking
+| Test File | What It Proves |
+|-----------|----------------|
+| `test_circuit_breaker.py` | State machine transitions are correct; retryable vs. deterministic error classification is accurate |
+| `test_errors.py` | SERF wire format is stable; retry semantics match the error classification |
+| `test_policy.py` | Default-deny posture holds; deny-beats-allow; glob matching; PII condition blocking |
+
+> **Philosophy:** Wide unit-test coverage of pure business logic is welcome. What cannot be left untested is anything that could accidentally open a security or availability hole. These three suites are the non-negotiable floor.
+
+<br/>
 
 ---
 
 ## 🛣️ Production Deployment
 
-For running this in an actual production environment (managed Postgres, real OAuth provider, SIEM integration, Kubernetes), see [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+For deploying to a real environment — managed Postgres, production OAuth, Kubernetes, SIEM integration — see [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
 
-Key swaps between local dev and production:
+The design is built for the swap:
 
-| Local (docker-compose) | Production |
-|------------------------|------------|
-| Dev JWT issuer | WorkOS AuthKit / Auth0 / Keycloak |
-| MinIO | AWS S3 / GCS / Azure Blob |
-| Local Postgres | AWS RDS / Cloud SQL / Supabase |
-| Redis container | Upstash / ElastiCache / MemoryDB |
-| Local OTel collector | Datadog / Honeycomb / Grafana Cloud |
-| File-based audit log | Splunk / Chronicle / SIEM of choice |
+| Local (docker-compose) | Production Equivalent |
+|------------------------|----------------------|
+| Dev JWT issuer | WorkOS AuthKit · Auth0 · Keycloak |
+| MinIO container | AWS S3 · Google Cloud Storage · Azure Blob |
+| PostgreSQL container | AWS RDS · Cloud SQL · Supabase |
+| Redis container | Upstash · ElastiCache · MemoryDB |
+| Local OTel collector | Datadog · Honeycomb · Grafana Cloud |
+| File-based audit log | Splunk · Google Chronicle · any SIEM |
+
+Every swap is a config change. No code changes required.
+
+<br/>
 
 ---
 
-## 📚 Documentation
+## 📚 Documentation Index
 
-- 📖 [**Blog Walkthrough** — Building a Production-Grade MCP Server](https://medium.com/@fareedkhandev/building-a-production-grade-mcp-server-architecture-with-agentic-system-de92127aca6f) *(recommended starting point)*
-- 🏗️ [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — The 12 components in depth
-- 🤖 [`docs/AGENT_SYSTEM.md`](./docs/AGENT_SYSTEM.md) — Multi-agent orchestrator internals
-- 🚢 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) — Production deployment options
+| Resource | Description |
+|----------|-------------|
+| 📖 **[Blog Walkthrough](https://medium.com/@fareedkhandev/building-a-production-grade-mcp-server-architecture-with-agentic-system-de92127aca6f)** | Every component, every decision, every line — the recommended starting point |
+| 🏗️ **[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)** | The twelve components in full engineering depth |
+| 🤖 **[`docs/AGENT_SYSTEM.md`](./docs/AGENT_SYSTEM.md)** | Multi-agent orchestrator design, memory model, and bounded loop mechanics |
+| 🚢 **[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)** | Kubernetes manifests, Cloudflare Workers notes, bare-metal considerations |
+
+<br/>
 
 ---
 
 ## 📜 License
 
-MIT. See [`LICENSE`](./LICENSE).
+MIT — see [`LICENSE`](./LICENSE).
+
+<br/>
 
 ---
 
 <div align="center">
 
-### ⭐ If this helped you, please consider starring the repo
+<br/>
 
-**Built with ☕ and a lot of 3 AM debugging**
+**Built with ☕ and a lot of 3 AM debugging sessions.**
 
-📖 [Read the full blog walkthrough](https://medium.com/@fareedkhandev/building-a-production-grade-mcp-server-architecture-with-agentic-system-de92127aca6f) · 🐛 [Report an issue](../../issues) · 💬 [Start a discussion](../../discussions)
+If this helped you ship something real, a ⭐ on the repo goes a long way.
+
+<br/>
+
+[📖 Read the blog](https://medium.com/@fareedkhandev/building-a-production-grade-mcp-server-architecture-with-agentic-system-de92127aca6f) &nbsp;·&nbsp; [🐛 Report an issue](../../issues) &nbsp;·&nbsp; [💬 Start a discussion](../../discussions)
+
+<br/>
 
 </div>
