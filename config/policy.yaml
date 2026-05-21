@@ -1,0 +1,61 @@
+# Atlas-MCP policy file.
+#
+# The engine is deny-by-default. Only the tools listed below are permitted,
+# and each rule limits *which* subjects, *which* tenants, and *which*
+# arguments are acceptable.
+#
+# Evaluate top-to-bottom. Deny rules beat allow rules. Absence of an allow
+# rule is a denial.
+
+rules:
+  # ── Support copilot agents ─────────────────────────────────────────────
+  - id: support-agents-build-context
+    subjects: ["role:support_copilot", "role:human_agent"]
+    actions: ["tool:postgres:read", "tool:elasticsearch:read", "tool:vector:read"]
+    resources: ["tenant:*/*"]
+
+  - id: support-agents-can-read-s3
+    subjects: ["role:support_copilot", "role:human_agent"]
+    actions: ["tool:s3:read"]
+    resources: ["tenant:*/docs/*", "tenant:*/tickets/*"]
+
+  # ── Analyst read-only access ───────────────────────────────────────────
+  - id: analysts-read-postgres
+    subjects: ["role:analyst"]
+    actions: ["tool:postgres:read"]
+    resources: ["tenant:*/analytics/*"]
+
+  # ── Outbound HTTP: tightly scoped allow list ───────────────────────────
+  - id: support-agents-can-fetch-docs
+    subjects: ["role:support_copilot"]
+    actions: ["tool:http:fetch"]
+    resources: ["tenant:*/*"]
+
+  # ── Deny rules (always win) ────────────────────────────────────────────
+  - id: no-one-can-drop-tables
+    subjects: ["*"]
+    actions: ["tool:postgres:read", "tool:postgres:write"]
+    resources: ["*"]
+    conditions:
+      sql_contains_any: ["DROP", "TRUNCATE", "GRANT", "REVOKE"]
+    effect: deny
+
+  - id: no-pii-columns-for-support-agents
+    subjects: ["role:support_copilot"]
+    actions: ["tool:postgres:read"]
+    resources: ["*"]
+    conditions:
+      pii_fields: ["ssn", "tax_id", "dob", "credit_card_number"]
+    effect: deny
+
+  # ── Tenant impersonation: internal tooling only ────────────────────────
+  - id: internal-admin-can-impersonate
+    subjects: ["role:internal_admin"]
+    actions: ["tenant:*:impersonate"]
+    resources: ["*"]
+
+  # ── Destructive S3 writes require approval (enforced in governance) ────
+  - id: support-agents-can-write-attachments
+    subjects: ["role:human_agent"]
+    actions: ["tool:s3:write"]
+    resources: ["tenant:*/attachments/*"]

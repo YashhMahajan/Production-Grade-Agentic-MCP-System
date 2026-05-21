@@ -1,0 +1,19 @@
+# Per-tenant outbound HTTP allowlist.
+#
+# Hostnames can be exact (e.g. `api.stripe.com`) or wildcards (e.g.
+# `*.acme.internal`). An agent attempting to reach any other host gets a
+# policy error — this is the primary defence against exfiltration via
+# prompt injection.
+
+"*":
+  # Hosts that every tenant can hit.
+  - api.company-status-page.internal
+
+acme:
+  - api.stripe.com
+  - api.sendgrid.com
+  - "*.acme.internal"
+
+globex:
+  - api.twilio.com
+  - "*.globex.internal"
