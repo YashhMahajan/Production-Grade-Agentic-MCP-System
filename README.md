@@ -533,13 +533,9 @@ MIT — see [`LICENSE`](./LICENSE).
 
 <br/>
 
-**Built with ☕ and a lot of 3 AM debugging sessions.**
+**Built with ☕ and with an unforgiving spririt xD**
 
-If this helped you ship something real, a ⭐ on the repo goes a long way.
-
-<br/>
-
-[📖 Read the blog](https://medium.com/@fareedkhandev/building-a-production-grade-mcp-server-architecture-with-agentic-system-de92127aca6f) &nbsp;·&nbsp; [🐛 Report an issue](../../issues) &nbsp;·&nbsp; [💬 Start a discussion](../../discussions)
+If this helped you, or want to connect then do ping me on [Linkedin](https://www.linkedin.com/in/yashhmahajan/)
 
 <br/>
 
