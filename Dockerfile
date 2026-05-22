@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
-#
-# Two-stage build: a fat builder that compiles wheels, then a slim runtime
-# image that only carries what is needed to serve.
+
+# Two-stage build: a fat builder that compiles wheels, 
+# then a slim runtime that only carries what is needed to serve.
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────
 FROM python:3.11-slim AS builder
@@ -9,7 +9,7 @@ FROM python:3.11-slim AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential libssl-dev libffi-dev \
+    build-essential libssl-dev libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -26,7 +26,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
     ATLAS_TRANSPORT=http ATLAS_HTTP_HOST=0.0.0.0 ATLAS_HTTP_PORT=8080
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl ca-certificates tini \
+    curl ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user — production servers never run as root.

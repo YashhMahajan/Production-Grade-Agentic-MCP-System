@@ -65,6 +65,9 @@ class AtlasServer:
         self._register_mcp_handlers()
 
     # ── MCP protocol handlers ──────────────────────────────────────────────
+    # list_tools (what to call)
+    # call_tool (what to execute)
+
     def _register_mcp_handlers(self) -> None:
         @self.mcp.list_tools()
         async def list_tools():  # type: ignore[misc]
