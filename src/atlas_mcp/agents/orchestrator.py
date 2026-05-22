@@ -16,7 +16,9 @@ At most one revise loop. Two reasons:
 Every agent shares the same :class:`AgentRun` so you get per-turn token
 counts and per-turn tool call counts in one place.
 """
-
+# 1st agent - planner
+# 2nd agent - retriever
+# 3rd agent - synthesizer
 from __future__ import annotations
 
 import asyncio

@@ -59,6 +59,7 @@ class LLM:
         
         openrouter_key = self.api_key or os.environ.get("OPENROUTER_API_KEY", "")
         
+        # this is for switching the models when current one fails or throws error
         fallback_configs = [
             {
                 "model": self.model,

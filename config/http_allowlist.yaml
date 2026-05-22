@@ -1,5 +1,5 @@
 # Per-tenant outbound HTTP allowlist.
-#
+
 # Hostnames can be exact (e.g. `api.stripe.com`) or wildcards (e.g.
 # `*.acme.internal`). An agent attempting to reach any other host gets a
 # policy error — this is the primary defence against exfiltration via

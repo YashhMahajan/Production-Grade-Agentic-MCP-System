@@ -1,3 +1,5 @@
+# all the prompts for the agents
+
 """Prompt templates for each agent role.
 
 Kept as plain strings in one place so they can be diffed, A/B tested, and

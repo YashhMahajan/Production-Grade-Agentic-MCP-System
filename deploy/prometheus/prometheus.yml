@@ -1,3 +1,5 @@
+# prometheus.yml — scrape Atlas-MCP metrics from each tenant agent
+
 global:
   scrape_interval: 10s
   evaluation_interval: 10s

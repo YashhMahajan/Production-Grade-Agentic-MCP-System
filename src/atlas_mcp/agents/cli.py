@@ -8,6 +8,7 @@ Needs ATLAS_MCP_URL, ATLAS_MCP_TOKEN, ATLAS_TENANT, and ATLAS_LLM_API_KEY
 in the environment.
 """
 
+#  this is to debug and run on local machine without docker
 from __future__ import annotations
 
 import asyncio

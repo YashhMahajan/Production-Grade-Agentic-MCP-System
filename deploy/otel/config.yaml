@@ -1,3 +1,5 @@
+# OpenTelemetry Collector configuration — this ships traces from all Atlas agents
+
 receivers:
   otlp:
     protocols:

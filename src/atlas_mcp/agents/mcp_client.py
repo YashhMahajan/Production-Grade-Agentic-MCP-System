@@ -14,6 +14,7 @@ In production you would generate this client from the server's
 does not require a client code change.
 """
 
+
 from __future__ import annotations
 
 import json

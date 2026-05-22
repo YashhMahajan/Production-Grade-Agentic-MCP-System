@@ -13,6 +13,7 @@ conversational follow-up ("what about my other order?") and LTM turns the
 copilot from reactive to proactive over time.
 """
 
+
 from __future__ import annotations
 
 import json
@@ -21,8 +22,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from redis.asyncio import Redis
-
-
 # ── Short-term (conversation) memory ──────────────────────────────────────
 @dataclass
 class Turn:

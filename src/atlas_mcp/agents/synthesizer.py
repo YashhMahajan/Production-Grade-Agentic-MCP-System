@@ -1,5 +1,7 @@
 """Synthesizer agent — drafts a customer reply from retrieved findings."""
 
+# agent 3 - synthesizer
+
 from __future__ import annotations
 
 import json

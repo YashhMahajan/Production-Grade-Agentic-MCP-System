@@ -1,9 +1,9 @@
 # Atlas-MCP policy file.
-#
+
 # The engine is deny-by-default. Only the tools listed below are permitted,
 # and each rule limits *which* subjects, *which* tenants, and *which*
 # arguments are acceptable.
-#
+
 # Evaluate top-to-bottom. Deny rules beat allow rules. Absence of an allow
 # rule is a denial.
 

@@ -1,5 +1,6 @@
 """Critic agent — gatekeeper that blocks bad drafts."""
 
+# 4th agent - critic
 from __future__ import annotations
 
 from dataclasses import dataclass

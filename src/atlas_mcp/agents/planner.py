@@ -1,5 +1,7 @@
 """Planner agent — turns a user question into a retrieval plan."""
 
+# agent 1 - planner
+
 from __future__ import annotations
 
 import re
