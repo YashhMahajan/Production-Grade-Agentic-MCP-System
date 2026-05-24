@@ -152,6 +152,9 @@ def build_http_app(server: AtlasServer) -> Starlette:
         Middleware(TenantMiddleware, settings=server.settings),
     ]
 
+    # flag that we set into .env (stateless mode doesnt let hold conversations between requests)
+    # so that load balancer can end any requst to any replica
+
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
     session_manager = StreamableHTTPSessionManager(
@@ -169,11 +172,12 @@ def build_http_app(server: AtlasServer) -> Starlette:
     return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
 
 
+# kubternetes liveness 
 async def _healthz(_request):
     from starlette.responses import JSONResponse
     return JSONResponse({"status": "ok"})
 
-
+# kubernetes readiness 
 async def _readyz(_request):
     from starlette.responses import JSONResponse
     return JSONResponse({"status": "ready"})
@@ -204,7 +208,7 @@ def _current_context() -> _Ctx:
     return _Ctx()
 
 
-# ── Entrypoint ─────────────────────────────────────────────────────────────
+# ── Entrypoint ───────────────────────────────────────────────────────────── 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
