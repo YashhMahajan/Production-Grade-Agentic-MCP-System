@@ -132,6 +132,9 @@ class AtlasServer:
 
 
 # ── HTTP transport (Streamable HTTP per MCP 2025-11) ──────────────────────
+
+# This wraps the MCP server in a Starlette app with middleware:
+
 def build_http_app(server: AtlasServer) -> Starlette:
     """Wraps the MCP server in a Starlette app with all middleware applied."""
 
@@ -157,11 +160,11 @@ def build_http_app(server: AtlasServer) -> Starlette:
 
     routes = [
         # /.well-known/mcp-server — Component 4: discovery without a live connection.
-        Route("/.well-known/mcp-server", endpoint=server.registry.well_known_endpoint),
-        Route("/healthz", endpoint=_healthz),
-        Route("/readyz", endpoint=_readyz),
-        Route("/metrics", endpoint=metrics_endpoint),
-        Mount("/mcp", app=session_manager.handle_request),
+        Route("/.well-known/mcp-server", endpoint=server.registry.well_known_endpoint),  #what the server offers without session
+        Route("/healthz", endpoint=_healthz),   #kubernetes liveness probe
+        Route("/readyz", endpoint=_readyz),     #kubernetes readiness probe
+        Route("/metrics", endpoint=metrics_endpoint),  #prometheus metrics
+        Mount("/mcp", app=session_manager.handle_request),   #mcp traffic goes here
     ]
     return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
 
@@ -177,6 +180,7 @@ async def _readyz(_request):
 
 
 # ── stdio transport (for local MCP hosts) ─────────────────────────────────
+# wires MCP with stdin/stdout
 async def run_stdio(server: AtlasServer) -> None:
     await server.startup()
     try:
@@ -206,10 +210,10 @@ def main() -> None:
     settings = get_settings()
     server = AtlasServer(settings)
 
-    if settings.transport == "stdio":
+    if settings.transport == "stdio":    # run for local IDEs (claude desktop)
         asyncio.run(run_stdio(server))
-    else:
-        app = build_http_app(server)
+    else:   
+        app = build_http_app(server)   # starlette server, run in kubernetes, remote deployments
         uvicorn.run(app, host=settings.http_host, port=settings.http_port)
 
 
