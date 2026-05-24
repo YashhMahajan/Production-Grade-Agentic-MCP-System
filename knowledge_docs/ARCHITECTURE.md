@@ -1,5 +1,7 @@
 # Architecture
 
+### Architecture file 
+
 Atlas-MCP is organised as **twelve components** that sit in a layered
 request pipeline. This document walks through the request path end to end,
 then unpacks each layer.

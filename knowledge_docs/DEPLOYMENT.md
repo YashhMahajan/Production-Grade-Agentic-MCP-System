@@ -1,4 +1,5 @@
 # Deployment
+# how the project is going to work with differnt containers and envs 
 
 ## Local (docker compose)
 

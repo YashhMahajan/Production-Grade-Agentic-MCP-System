@@ -1,5 +1,7 @@
 # The Multi-Agent System
 
+knowledge for the systematic understanding of the agent system.
+
 Atlas-MCP is an infrastructure layer. `src/atlas_mcp/agents/` is the
 product layer that sits on top of it. Concretely, it is a **customer-support
 copilot** that helps human agents answer tickets faster.
