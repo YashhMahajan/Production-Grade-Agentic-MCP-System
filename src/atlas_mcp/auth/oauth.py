@@ -60,6 +60,7 @@ class TokenValidator:
     def __init__(self, settings: ServerSettings):
         self.settings = settings
         self._jwks = PyJWKClient(settings.auth_jwks_url, cache_keys=True, max_cached_keys=16)
+        # PyJWKClient(cache_keys=True) caches the signing keys from the authorization server's JWKS endpoint. Without this, every request would make an HTTP call to fetch the public key, which would kill latency.
 
     def validate(self, bearer: str) -> Principal:
         try:

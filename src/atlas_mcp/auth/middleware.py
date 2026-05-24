@@ -20,8 +20,11 @@ from atlas_mcp.errors.framework import AuthError
 
 
 # Endpoints that don't require auth — discovery and liveness are public.
-_PUBLIC_PATHS = frozenset({"/.well-known/mcp-server", "/healthz", "/readyz", "/metrics"})
+# /.well-known/mcp-server must be unauthenticated because MCP registries need to discover the server's capabilities before any token exists.
 
+# healthz, /readyz, and /metrics must be unauthenticated because Kubernetes liveness probes and Prometheus scrapers do not carry tokens.
+
+_PUBLIC_PATHS = frozenset({"/.well-known/mcp-server", "/healthz", "/readyz", "/metrics"})
 
 class AuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, settings: ServerSettings):
@@ -47,9 +50,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.principal = principal
         return await call_next(request)
 
+    # Without this, hosts like local IDEs would just fails, and we dont want that because it becomes difficult to troubleshoot afterwards sp we add if before only.
     def _unauthenticated(self, error_code: str) -> JSONResponse:
         return JSONResponse(
             {"error": error_code},
+            # If validation fails, we return a 401 with a proper WWW-Authenticate header so MCP hosts can trigger their OAuth flow
             status_code=401,
             headers={
                 "WWW-Authenticate": (
