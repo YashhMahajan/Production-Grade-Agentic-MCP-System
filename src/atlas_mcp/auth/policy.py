@@ -38,6 +38,7 @@ from atlas_mcp.errors.framework import PolicyError
 
 
 @dataclass(frozen=True, slots=True)
+# Rule is an immutable dataclass. The engine loads rules from the YAML file, parses them into Rule instances, and holds them in a list.
 class Rule:
     id: str
     subjects: tuple[str, ...]
@@ -52,7 +53,7 @@ class PolicyEngine:
 
     def __init__(self, rules: list[Rule], default_deny: bool = True):
         self.rules = rules
-        self.default_deny = default_deny
+        self.default_deny = default_deny #default_deny=True is our safety net, no explicit allow means denial.
 
     @classmethod
     def from_file(cls, path: str | Path, default_deny: bool = True) -> "PolicyEngine":
@@ -76,6 +77,13 @@ class PolicyEngine:
         Matching rules are partitioned into allow and deny. Deny always wins.
         If no allow rule matches and default_deny is on, the call is rejected.
         """
+
+        # 1. Walk every rule, check if the (subject, action, resource) triple matches.
+        # 2. If the rule has conditions, check those too.
+        # 3. Partition matches into allow and deny buckets.
+        # 4. Deny wins immediately. If any deny rule matches, reject with a PolicyError.
+        # 5. Default deny wins if no allow matches. No allow rule = no permission.
+
         matched_allow: list[Rule] = []
         matched_deny: list[Rule] = []
 
@@ -100,6 +108,8 @@ class PolicyEngine:
             )
 
     # ── Pattern matching ──────────────────────────────────────────────────
+    # the glob is deliberately limited (exact match, trailing star, or bare *). No full regex, no complex expressions.
+    
     @staticmethod
     def _matches(rule: Rule, subject: str, action: str, resource: str) -> bool:
         return (
@@ -108,6 +118,7 @@ class PolicyEngine:
             and _glob_any(rule.resources, resource)
         )
 
+    # _conditions_match is a switch over known condition names with explicit handlers. Adding a new condition type is a code change, not a config change, which is what you want for security-sensitive logic.
     @staticmethod
     def _conditions_match(conditions: dict, context: dict) -> bool:
         # Narrow DSL: only a handful of operators. Easy to audit.
@@ -126,7 +137,7 @@ class PolicyEngine:
             return False
         return True
 
-
+# The default for unknown conditions is False, we fail closed.
 def _glob_any(patterns: tuple[str, ...], value: str) -> bool:
     """Supports trailing-star globs and bare `*` wildcard."""
     for pat in patterns:
