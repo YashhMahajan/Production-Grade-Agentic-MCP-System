@@ -50,6 +50,7 @@ class PendingApprovalError(ToolError):
     def __init__(self, approval: PendingApproval):
         super().__init__(
             code="pending_approval",
+            # False because the human still hasnt approved yet and the outcome doesnt change. 
             retryable=False,
             hint=(
                 f"tool {approval.tool!r} requires human approval; "
@@ -66,6 +67,8 @@ class ApprovalGate:
     def __init__(self, redis: Redis):
         self._redis = redis
 
+    # request() creates a new pending approval, stores it in Redis with a 1-hour TTL, and returns it.
+    # The TTL means an unreviewed approval self-destructs after an hour, so Redis does not fill up with abandoned requests.
     async def request(self, *, tenant: str, caller: str, delegator: str | None,
                       tool: str, arguments: dict[str, Any]) -> PendingApproval:
         approval = PendingApproval(
@@ -81,6 +84,8 @@ class ApprovalGate:
         await self._redis.set(key, json.dumps(asdict(approval)), ex=APPROVAL_TTL_SECONDS)
         return approval
 
+    # check() enforces that the tenant of the approval must match the expected tenant
+    # This prevents an attacker with access to one tenant's API from using another tenant's approval id to run a destructive operation.
     async def check(self, approval_id: str, expected_tenant: str) -> PendingApproval:
         """Look up an approval and enforce that the tenant matches."""
         raw = await self._redis.get(self._key(approval_id))
@@ -99,6 +104,8 @@ class ApprovalGate:
             )
         return approval
 
+    # Both record who approved or denied. This goes into the audit log, which is critical for compliance.
+    # If an auditor asks “who approved the refund for customer X”, we need to answer.
     async def approve(self, approval_id: str, approver: str) -> PendingApproval:
         approval = await self._load(approval_id)
         approval.state = "approved"

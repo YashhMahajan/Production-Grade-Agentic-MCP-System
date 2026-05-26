@@ -43,9 +43,12 @@ class TenantMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"error": "no_principal"}, status_code=401)
 
         # Start from the token's tenant claim.
+        # comes from JWT claim first. Token is signed by the authorization server. We do not trust headers for tenant identity by default.
         tenant = principal.tenant if principal is not None else "default"
 
         # Impersonation: allow an X-Tenant-Id header if the scope permits.
+        # only if the principal has tenant:*:impersonate scope.
+        # This scope is given only to internal admin tools that need to investigate a specific customer's data. If a regular agent sends X-Tenant-Id: othertenant, we return a 403.
         header_tenant = request.headers.get(self.settings.tenant_header)
         if header_tenant and header_tenant != tenant:
             if principal is None or not principal.has_scope("tenant:*:impersonate"):

