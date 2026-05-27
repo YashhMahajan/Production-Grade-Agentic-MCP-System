@@ -41,6 +41,7 @@ class ToolError(Exception):
     def __str__(self) -> str:
         return f"{self.code}: {self.hint or ''}"
 
+    # MCP Wire format to_dict()
     def to_dict(self) -> dict[str, Any]:
         return {
             "code": self.code,
@@ -61,7 +62,7 @@ class PolicyError(ToolError):
 class ValidationError(ToolError):
     """Input failed schema or constraint validation."""
 
-
+# SERF - always retryable - retry_after_seconds for "hint" & "context"
 class RateLimitError(ToolError):
     """Per-tenant or per-tool quota exceeded."""
 
@@ -118,6 +119,9 @@ class ToolNotFoundError(ToolError):
 
 
 # ── Wire-format conversion ────────────────────────────────────────────────
+
+# This is where the SERF payload meets the MCP protocol.
+
 def to_mcp_error(exc: ToolError) -> ErrorData:
     """Convert an Atlas :class:`ToolError` into the MCP on-the-wire shape.
 
@@ -130,3 +134,7 @@ def to_mcp_error(exc: ToolError) -> ErrorData:
         message=f"{exc.code}: {exc.hint or ''}",
         data=exc.to_dict(),
     )
+
+# 1. MCP uses JSON-RPC under the hood, and JSON-RPC errors have a code, message, and optional data field.
+# 2. We shove our full SERF dictionary into data. Hosts that understand Atlas can parse the data.retryable and data.hint fields and make smart decisions.
+# 3. Hosts that only read message still get a human-readable string. The best of both worlds.
