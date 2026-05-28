@@ -65,6 +65,7 @@ class Tool(ABC):
         self.policy = policy
 
     # ── Public surface used by the dispatch pipeline ───────────────────────
+    # entry point that takes the raw arguments dict from MCP and runs them through the tool's Pydantic schema.
     def validate(self, arguments: dict) -> BaseModel:
         """Component 5 entry point. Raises :class:`ValidationError` on bad input."""
         try:
@@ -77,6 +78,8 @@ class Tool(ABC):
                 context={"tool": self.meta.name},
             ) from exc
 
+    # produces a deterministic SHA-256 hash of (tool, tenant, args).
+    # This is what the cache layer uses, and it includes the tenant so caches never cross tenant boundaries. Even if two tenants run the exact same query, they get different cache keys.
     def cache_key(self, tenant: str, args: BaseModel) -> str:
         """Deterministic hash used by the Component 9 cache layer."""
         payload = {"tool": self.meta.name, "tenant": tenant, "args": args.model_dump(mode="json")}
@@ -111,3 +114,9 @@ def _summarise_pydantic_error(exc: Exception) -> str:
             loc = ".".join(str(p) for p in first.get("loc", []))
             return f"{loc}: {first.get('msg', 'invalid')}"
     return str(exc)
+
+# Pydantic errors are verbose by default, multiple errors, field paths as tuples, rich context.
+
+# That is great for humans debugging but becomes overwhelming for an LLM that needs to decide what to do next.
+
+# We condense to one line: field: reason. Short, actionable, trainable.

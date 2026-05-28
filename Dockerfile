@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 COPY pyproject.toml ./
+COPY README.md ./
 COPY src ./src
 
 RUN pip install --upgrade pip build && \

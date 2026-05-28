@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class ServerSettings(BaseSettings):
     """Top-level server configuration."""
 
-    model_config = SettingsConfigDict(env_prefix="ATLAS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="ATLAS_", env_file=".env", extra="ignore", frozen=True)
 
     # ── Component 1: Transport ──────────────────────────────────────────────
     transport: Literal["stdio", "http"] = "http"

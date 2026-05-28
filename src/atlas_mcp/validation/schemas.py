@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
+# slots=True makes it memory-efficient, which matters when you are processing thousands of calls per second.
 @dataclass(frozen=True, slots=True)
 class ToolCallEnvelope:
     """Normalised shape of an incoming MCP tool call."""
