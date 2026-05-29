@@ -21,17 +21,18 @@ from atlas_mcp.config import get_settings
 from atlas_mcp.errors.framework import UpstreamError, ValidationError
 from atlas_mcp.tools.base import Tool, ToolLevel, ToolMetadata
 
+# The forbidden keywords list is our defense-in-depth against prompt injection. Even if the policy engine has a bug, this list makes it impossible for any SQL containing DROP to execute through this tool.
 
 _FORBIDDEN_KEYWORDS = (
     "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE", "ALTER",
     "CREATE", "GRANT", "REVOKE", "COPY", "CALL", "EXECUTE",
 )
 
-
+# Pydantic schema that validates inputs
 class PostgresQueryInput(BaseModel):
     sql: str = Field(..., description="A single SELECT statement.")
     params: list[Any] = Field(default_factory=list, description="Positional parameters.")
-    max_rows: int = Field(100, ge=1, le=1000)
+    max_rows: int = Field(100, ge=1, le=1000) #capped with 1000 rows so memory is not exhausted.
 
     @field_validator("sql")
     @classmethod
@@ -67,8 +68,9 @@ class PostgresQueryTool(Tool):
     )
     input_schema: ClassVar[type[BaseModel]] = PostgresQueryInput
 
+    # The _pool is a class variable, not an instance variable. 
+    # This is deliberate. We want a single shared connection pool across all PostgresQueryTool instances because opening a new pool per instance would blow up our Postgres connection limit.
     _pool: asyncpg.Pool | None = None
-
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)
         self.settings = get_settings()
@@ -87,14 +89,14 @@ class PostgresQueryTool(Tool):
         pool = await self._ensure_pool()
         try:
             async with pool.acquire() as conn:
-                # Tenant isolation is enforced at the row-security level in Postgres.
+                # Tenant isolation is enforced at the RLS level in Postgres.
                 # We set the tenant id on the connection before every query.
                 await conn.execute("SET LOCAL app.tenant_id = $1", tenant)
                 rows = await conn.fetch(
                     f"{args.sql} LIMIT {args.max_rows}", *args.params
                 )
         except asyncpg.PostgresError as exc:
-            # Distinguish deterministic query errors from transient ones.
+            # Distinguish deterministic query errors from temporary or brief ones.
             retryable = isinstance(exc, (asyncpg.ConnectionDoesNotExistError,
                                          asyncpg.InterfaceError,
                                          asyncpg.TooManyConnectionsError))

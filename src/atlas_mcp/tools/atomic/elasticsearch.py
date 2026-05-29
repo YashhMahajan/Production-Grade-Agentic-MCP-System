@@ -47,6 +47,7 @@ class ElasticsearchSearchTool(Tool):
     async def run(self, tenant: str, args: ElasticsearchSearchInput) -> dict:  # type: ignore[override]
         # Tenant isolation: every tenant's documents are tagged, and we
         # inject a mandatory filter so a tenant can never read another's data.
+        # we do tenant isolation at the query layer, we wrap the agent’s query in a bool.must and add a mandatory filter clause that pins _tenant == tenant.
         body = {
             "query": {"bool": {"must": [args.query], "filter": [{"term": {"_tenant": tenant}}]}},
             "size": args.size,

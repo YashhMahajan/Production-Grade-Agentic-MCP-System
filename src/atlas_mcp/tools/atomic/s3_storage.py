@@ -82,7 +82,7 @@ class S3PutTool(Tool):
         description="Write a text object to the Atlas S3 bucket. Requires human approval.",
         level=ToolLevel.ATOMIC,
         scopes_required=("tool:s3:write",),
-        destructive=True,
+        destructive=True,  # governance layer 4 - create a pending approval instead of executing. READ doesnt need any approval but WRITE does. 
         cacheable=False,
         timeout_ms=5_000,
         tags=("s3", "storage", "write"),

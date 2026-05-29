@@ -35,6 +35,8 @@ class ToolRegistry:
             raise ValueError(f"tool {name!r} already registered")
         self._tools[name] = tool
 
+    # The discovery method walks our tool packages and registers everything.
+    # we do explicit imports here. The registration happens in level order, atomic first, then composed, then workflow.
     async def discover(self, policy=None) -> None:
         """Load tools from the ``atlas_mcp.tools.*`` packages.
 
@@ -82,6 +84,8 @@ class ToolRegistry:
         return iter(self._tools.values())
 
     # ── Filtering for list_tools ──────────────────────────────────────────
+    # Now the visibility filter, which is the key to keeping the agent’s context clean.
+    # An agent with tool:postgres:read should not even see s3.put_object in its context, because then the LLM might try to use it and hit a policy denial.
     def list_visible(self, tenant: str, scopes: Iterable[str]) -> list[MCPToolSpec]:
         """Hide tools whose required scopes the caller does not hold.
 
@@ -140,3 +144,5 @@ def _to_mcp_spec(tool: Tool) -> MCPToolSpec:
         description=tool.meta.description,
         inputSchema=schema,
     )
+
+# The well-known document is unauthenticated, because registries need to go through it without a token. But it only exposes non-sensitive summary information (tool names, levels, descriptions, tags).

@@ -51,6 +51,7 @@ class VectorSearchTool(Tool):
 
     async def run(self, tenant: str, args: VectorSearchInput) -> dict:  # type: ignore[override]
         # Tenant isolation: we inject a filter clause that pins the tenant.
+        # Tenant injected via a mandatory must clause. User filters are merged under the tenant filter, so they can refine but never escape.
         tenant_filter = {"must": [{"key": "tenant", "match": {"value": tenant}}]}
         combined_filter = tenant_filter
         if args.filter:
@@ -90,3 +91,7 @@ class VectorSearchTool(Tool):
                 for r in payload.get("result", [])
             ]
         }
+
+# does not embed the query, it takes pre-computer vector as input
+
+#agents can resuse for multiple searches, embedding models changes so no server deploy. 
