@@ -12,6 +12,7 @@ and get three separate cache lines. The composed tool does it once, with
 one policy check and one cache entry. Agents overwhelmingly reach for the
 composed tool when it exists — exactly the behaviour we want.
 """
+# No LLM in the loop, & no brnanching. 
 
 from __future__ import annotations
 

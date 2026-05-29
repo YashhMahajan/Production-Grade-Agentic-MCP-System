@@ -6,7 +6,9 @@ pattern that consistently beats either retriever alone on enterprise
 knowledge bases with a mix of technical jargon (where BM25 wins) and
 natural-language queries (where dense wins).
 """
+# fuses lexical and dense retrieval using Reciprocal Rank Fusion (RRF)
 
+# score = 1 / (k + rank) per retriever, summed across retrievers. k=60 is the canonical default from the original paper.
 from __future__ import annotations
 
 from typing import Any, ClassVar
