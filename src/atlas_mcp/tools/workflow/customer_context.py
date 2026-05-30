@@ -24,6 +24,7 @@ from atlas_mcp.tools.atomic.postgres import PostgresQueryInput, PostgresQueryToo
 from atlas_mcp.tools.base import Tool, ToolLevel, ToolMetadata
 from atlas_mcp.tools.composed.semantic_search import SemanticSearchInput, SemanticSearchTool
 
+#  An agent from accidentally injecting SQL or path traversal characters into a customer id. Tight input validation is especially important for workflow tools because they fan out to multiple downstream systems.
 
 class CustomerContextInput(BaseModel):
     customer_id: str = Field(..., pattern=r"^[A-Za-z0-9\-_]{1,64}$")
@@ -64,6 +65,7 @@ class CustomerContextTool(Tool):
         self.es = ElasticsearchSearchTool(policy)
         self.semantic = SemanticSearchTool(policy)
 
+    # Run methods for fans out concurrently.
     async def run(self, tenant: str, args: CustomerContextInput) -> dict:  # type: ignore[override]
         # Build the list of sub-tasks conditionally.
         tasks: dict[str, asyncio.Task] = {}
@@ -85,7 +87,8 @@ class CustomerContextTool(Tool):
             )
 
         # Gather with return_exceptions — a partial context is better than none.
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        # Partial context is better than no context, because the agent can work with what it has and the partial_errors field tells it what is missing.
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)  # means a failure in one sub-query does not kill the others.
         keyed = dict(zip(tasks.keys(), results))
 
         # Separate successes from errors so the agent can see what failed.
@@ -102,6 +105,7 @@ class CustomerContextTool(Tool):
             context["partial_errors"] = errors
         return context
 
+    # Successful data lives under its key (profile, orders, tickets, docs)
     async def _profile(self, tenant: str, customer_id: str) -> dict:
         result = await self.postgres.run(
             tenant,
