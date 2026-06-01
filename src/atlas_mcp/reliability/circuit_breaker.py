@@ -14,6 +14,9 @@ call will keep failing; that is what the :class:`UpstreamError.retryable`
 flag in Component 10 is for.
 """
 
+# The breaker counts only retryable upstream failures”. A bad SQL query is not a reason to open the circuit.
+# The next query might be perfectly valid, but a Postgres connection timeout is a reason to open the circuit because the next query will likely also time out.
+
 from __future__ import annotations
 
 import asyncio
@@ -32,6 +35,7 @@ class State(str, Enum):
     HALF_OPEN = "half_open"
 
 
+# This is where our SERF framework pays off. The UpstreamError.retryable flag that we set back in the Postgres tool decides whether each failure counts toward tripping the breaker.
 class CircuitBreaker:
     def __init__(
         self,
