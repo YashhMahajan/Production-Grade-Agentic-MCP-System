@@ -13,3 +13,4 @@ build/
 .ruff_cache/
 *.jsonl
 .DS_Store
+docs/STARTUP.md
