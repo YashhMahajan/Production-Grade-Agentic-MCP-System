@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from atlas_mcp.agents.planner import PlannerAgent
-from atlas_mcp.auth.policy import PolicyEngine
-from atlas_mcp.tools.atomic import embeddings
-from atlas_mcp.tools.atomic.postgres import PostgresQueryInput, PostgresQueryTool
-from atlas_mcp.tools.atomic.vector_search import VectorSearchTool
-from atlas_mcp.tools.composed import hybrid_search, semantic_search
-from atlas_mcp.tools.composed.semantic_search import SemanticSearchInput, SemanticSearchTool
+from scout_mcp.agents.planner import PlannerAgent
+from scout_mcp.auth.policy import PolicyEngine
+from scout_mcp.tools.atomic import embeddings
+from scout_mcp.tools.atomic.postgres import PostgresQueryInput, PostgresQueryTool
+from scout_mcp.tools.atomic.vector_search import VectorSearchTool
+from scout_mcp.tools.composed import hybrid_search, semantic_search
+from scout_mcp.tools.composed.semantic_search import SemanticSearchInput, SemanticSearchTool
 
 POLICY = PolicyEngine(rules=[], default_deny=False)
 
@@ -131,7 +131,7 @@ def test_one_embedder_is_shared(monkeypatch):
 
 
 def test_default_model_is_bge_base():
-    from atlas_mcp.config import ServerSettings
+    from scout_mcp.config import ServerSettings
     assert ServerSettings(_env_file=None).embedding_model == "BAAI/bge-base-en-v1.5"
 
 
@@ -175,7 +175,7 @@ async def test_vector_tool_exposes_doc_id(monkeypatch):
         async def __aexit__(self, *a): pass
         async def post(self, url, json, headers=None): return Resp()
     monkeypatch.setattr(httpx, "AsyncClient", Client)
-    from atlas_mcp.tools.atomic.vector_search import VectorSearchInput
+    from scout_mcp.tools.atomic.vector_search import VectorSearchInput
     out = await VectorSearchTool(POLICY).run("acme", VectorSearchInput(collection="c", vector=[1.0]))
     assert [m["doc_id"] for m in out["matches"]] == ["doc_a", 7]
 

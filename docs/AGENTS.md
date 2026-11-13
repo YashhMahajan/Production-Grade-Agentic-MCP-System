@@ -6,9 +6,9 @@ Rules for any AI assistant or script working in this repo, then the limits the c
 
 1. **Do not start Docker, Compose, or any container, VM, or large download on the developer's machine.** Check compose files and Dockerfiles statically (YAML parses, `ruff`, `docker compose config` in CI). Anything that needs a running container runs in GitHub Actions: push a branch and read the run.
 2. **Never print or commit values from `.env`.** It is gitignored and holds real keys. You may edit it when the owner asks. Mirror every new variable in `.env.example` with a safe development value.
-3. **Do not weaken isolation or deny-by-default.** Never remove a tenant filter, widen `atlas_app`'s grants, let the server connect as a superuser, set `ATLAS_POLICY_DEFAULT_DENY=false`, or add a policy rule without a test that shows who it allows.
+3. **Do not weaken isolation or deny-by-default.** Never remove a tenant filter, widen `scout_app`'s grants, let the server connect as a superuser, set `SCOUT_POLICY_DEFAULT_DENY=false`, or add a policy rule without a test that shows who it allows.
 4. **Keep the data stores private and authenticated.** Postgres, Redis, Elasticsearch, Qdrant and the S3 store stay on the internal `data` network with no published ports, and each keeps its password or key. Do not publish a port on anything except `127.0.0.1`.
-5. **Give each service only the secrets it uses.** `atlas-mcp` lists its settings under `environment:`; do not give it `env_file: .env`, which would put the LLM keys in the server container.
+5. **Give each service only the secrets it uses.** `scout-mcp` lists its settings under `environment:`; do not give it `env_file: .env`, which would put the LLM keys in the server container.
 6. **A new tool needs four things:** a Pydantic input schema, `scopes_required`, a rule in `config/policy.yaml`, and a test in `tests/`. A write tool also sets `destructive=True`.
 7. **Do not invent numbers.** A figure in the docs comes from a script in `scripts/` or a CI run you can link, or from a linked source. If it has not been measured, say so.
 8. **No AI attribution anywhere.** No `Co-Authored-By`, no "generated with" line, in commits, PRs, docs, or comments.
@@ -42,7 +42,7 @@ Needing a running stack (CI does this; you do not run it locally):
 cp .env.example .env
 docker compose up -d --build --wait
 docker compose --profile seed run --rm seed
-ATLAS_E2E=1 pytest tests/e2e -v
+SCOUT_E2E=1 pytest tests/e2e -v
 python scripts/bench_stack.py 200 10
 ```
 
@@ -78,6 +78,6 @@ Load policy.yaml at startup and fail if it is missing
 | Critic revisions | 1 | `agents/orchestrator.py` |
 | Customer id | must look like `CUST-1001`, else the copilot asks for one | `agents/planner.py` |
 | Writes | none; the allow-list has no write tool, and the server also enforces policy | both |
-| LLM providers | one, unless `ATLAS_LLM_FALLBACK=true` | `agents/base.py` |
+| LLM providers | one, unless `SCOUT_LLM_FALLBACK=true` | `agents/base.py` |
 
 The server's policy applies to the copilot like any client. The client-side allow-list is a second layer, not the only one.

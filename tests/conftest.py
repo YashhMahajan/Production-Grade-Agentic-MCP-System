@@ -16,14 +16,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from atlas_mcp.agents.mcp_client import _decode_body
-from atlas_mcp.auth import middleware
-from atlas_mcp.auth.oauth import Principal
-from atlas_mcp.cache.manager import CacheManager
-from atlas_mcp.config import ServerSettings
-from atlas_mcp.governance.approval import ApprovalGate
-from atlas_mcp.ratelimit.limiter import RateLimiter
-from atlas_mcp.server import AtlasServer, build_http_app
+from scout_mcp.agents.mcp_client import _decode_body
+from scout_mcp.auth import middleware
+from scout_mcp.auth.oauth import Principal
+from scout_mcp.cache.manager import CacheManager
+from scout_mcp.config import ServerSettings
+from scout_mcp.governance.approval import ApprovalGate
+from scout_mcp.ratelimit.limiter import RateLimiter
+from scout_mcp.server import ScoutServer, build_http_app
 
 ROOT = Path(__file__).resolve().parent.parent
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
@@ -80,7 +80,7 @@ class FakeRedis:
 
 class _Validator:
     def validate(self, bearer: str):
-        from atlas_mcp.errors.framework import AuthError
+        from scout_mcp.errors.framework import AuthError
 
         if bearer not in TOKENS:
             raise AuthError("invalid_token")
@@ -97,8 +97,8 @@ async def app_client(monkeypatch, tmp_path):
     monkeypatch.setattr(RateLimiter, "disconnect", noop)
     monkeypatch.setattr(RateLimiter, "acquire", noop)
     monkeypatch.setattr(middleware, "get_validator", lambda settings: _Validator())
-    monkeypatch.setattr("atlas_mcp.tools.atomic.embeddings.get_embedder", lambda: object())
-    monkeypatch.setattr("atlas_mcp.server.init_tracing", lambda settings: None)  # no OTLP export
+    monkeypatch.setattr("scout_mcp.tools.atomic.embeddings.get_embedder", lambda: object())
+    monkeypatch.setattr("scout_mcp.server.init_tracing", lambda settings: None)  # no OTLP export
 
     settings = ServerSettings(
         _env_file=None,
@@ -106,7 +106,7 @@ async def app_client(monkeypatch, tmp_path):
         audit_log_path=str(tmp_path / "audit.jsonl"),
         retry_base_delay_ms=1,
     )
-    server = AtlasServer(settings)
+    server = ScoutServer(settings)
     app = build_http_app(server)
 
     # The MCP session manager owns an anyio task group, which must be entered and

@@ -6,9 +6,9 @@ import json
 
 import httpx
 
-from atlas_mcp.agents.mcp_client import AtlasMCPClient
-from atlas_mcp.tools.atomic.postgres import PostgresQueryTool
-from atlas_mcp.tools.atomic.s3_storage import S3PutTool
+from scout_mcp.agents.mcp_client import ScoutMCPClient
+from scout_mcp.tools.atomic.postgres import PostgresQueryTool
+from scout_mcp.tools.atomic.s3_storage import S3PutTool
 from tests.conftest import call, rpc
 
 INIT = {"protocolVersion": "2025-06-18", "capabilities": {},
@@ -27,14 +27,14 @@ async def test_mcp_endpoint_answers_without_redirect_as_event_stream(app_client)
     resp, body = await rpc(app_client, "initialize", INIT)
     assert resp.status_code == 200  # was 307, then a crash on the missing task group
     assert resp.headers["content-type"].startswith("text/event-stream")
-    assert body["result"]["serverInfo"]["name"] == "atlas-mcp"
+    assert body["result"]["serverInfo"]["name"] == "scout-mcp"
 
 
 async def test_probes_and_discovery_need_no_token(app_client):
     assert (await app_client.get("/healthz")).status_code == 200
     assert (await app_client.get("/readyz")).json() == {"status": "ready"}
     doc = (await app_client.get("/.well-known/mcp-server")).json()
-    assert doc["authorization_server"]["issuer"] == "https://auth.atlas.local"
+    assert doc["authorization_server"]["issuer"] == "https://auth.scout.local"
     assert len(doc["tools_summary"]) == 9
 
 
@@ -133,7 +133,7 @@ async def test_unexpected_exceptions_do_not_leak(app_client, monkeypatch):
 # ── Agent client against the real server ──────────────────────────────────
 async def test_agent_client_lists_tools_and_calls_one(app_client, monkeypatch):
     monkeypatch.setattr(PostgresQueryTool, "run", fake_pg([]))
-    async with AtlasMCPClient(
+    async with ScoutMCPClient(
         "http://test", "support", tenant="acme", transport=app_client.transport_
     ) as mcp:
         tools = await mcp.list_tools()
@@ -207,7 +207,7 @@ async def test_metrics_endpoint_serves_the_servers_counters(app_client, monkeypa
     monkeypatch.setattr(PostgresQueryTool, "run", fake_pg([]))
     await call(app_client, "postgres.query", {"sql": "SELECT id FROM orders"})
     text = (await app_client.get("/metrics")).text
-    assert 'atlas_tool_calls_total{status="ok",tool="postgres.query"} 1.0' in text
+    assert 'scout_tool_calls_total{status="ok",tool="postgres.query"} 1.0' in text
 
 
 async def test_unknown_tool_names_do_not_create_metric_series(app_client):
@@ -218,9 +218,9 @@ async def test_unknown_tool_names_do_not_create_metric_series(app_client):
 
 
 async def test_readyz_is_503_until_startup_finishes(monkeypatch, tmp_path):
-    from atlas_mcp.config import ServerSettings
-    from atlas_mcp.server import AtlasServer, build_http_app
-    server = AtlasServer(ServerSettings(_env_file=None))
+    from scout_mcp.config import ServerSettings
+    from scout_mcp.server import ScoutServer, build_http_app
+    server = ScoutServer(ServerSettings(_env_file=None))
     app = build_http_app(server)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.get("/readyz")).status_code == 503
@@ -237,16 +237,16 @@ async def test_each_call_gets_a_span_and_the_audit_line_carries_its_trace_id(
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    monkeypatch.setattr("atlas_mcp.server.get_tracer", lambda: provider.get_tracer("test"))
+    monkeypatch.setattr("scout_mcp.server.get_tracer", lambda: provider.get_tracer("test"))
     monkeypatch.setattr(PostgresQueryTool, "run", fake_pg([]))
 
     await call(app_client, "postgres.query", {"sql": "SELECT id FROM orders"})
     await call(app_client, "nope", {})
 
     ok_span, bad_span = exporter.get_finished_spans()
-    assert ok_span.name == "tool postgres.query" and ok_span.attributes["atlas.tenant"] == "acme"
+    assert ok_span.name == "tool postgres.query" and ok_span.attributes["scout.tenant"] == "acme"
     assert bad_span.name == "tool unknown"  # the caller-chosen name is not used
-    assert bad_span.attributes["atlas.error_code"] == "tool_not_found"
+    assert bad_span.attributes["scout.error_code"] == "tool_not_found"
     lines = [json.loads(x) for x in app_client.server.audit.path.read_text().splitlines()]
     assert lines[0]["trace_id"] == format(ok_span.context.trace_id, "032x")
 

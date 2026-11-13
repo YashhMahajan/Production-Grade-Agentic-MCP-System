@@ -1,4 +1,4 @@
-# Atlas-MCP policy file.
+# Scout-MCP policy file.
 
 # The engine is deny-by-default. Only the tools listed below are permitted,
 # and each rule limits *which* subjects, *which* tenants, and *which*

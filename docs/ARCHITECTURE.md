@@ -1,15 +1,15 @@
 # Architecture
 
-I built Atlas MCP as one MCP server between AI agents and a company's data stores, plus a four-agent support copilot that uses it. This page describes what the code and the compose stack do. Where a module exists but is not on the request path, I say so.
+I built Scout MCP as one MCP server between AI agents and a company's data stores, plus a four-agent support copilot that uses it. This page describes what the code and the compose stack do. Where a module exists but is not on the request path, I say so.
 
 ## The stack
 
 Fifteen services in `docker-compose.yml`, on two networks.
 
 ```
-host ──127.0.0.1:8443──> caddy ──> atlas-mcp ──> postgres, redis, elasticsearch, qdrant, s3   (internal "data" network)
-host ──127.0.0.1:8081──> keycloak ──> postgres                                  atlas-mcp ──> keycloak (JWKS)
-host ──127.0.0.1:3000/9090/16686──> grafana, prometheus, jaeger                 atlas-mcp ──> otel-collector ──> jaeger
+host ──127.0.0.1:8443──> caddy ──> scout-mcp ──> postgres, redis, elasticsearch, qdrant, s3   (internal "data" network)
+host ──127.0.0.1:8081──> keycloak ──> postgres                                  scout-mcp ──> keycloak (JWKS)
+host ──127.0.0.1:3000/9090/16686──> grafana, prometheus, jaeger                 scout-mcp ──> otel-collector ──> jaeger
 ```
 
 - The `data` network is `internal: true`: Postgres, Redis, Elasticsearch, Qdrant and the S3 store have no route to or from the host, and every one of them requires a credential.
@@ -42,7 +42,7 @@ Time budget: each call gets the shorter of the tool's declared `timeout_ms` and 
 
 ## Identity
 
-Atlas only verifies tokens. Keycloak (realm `atlas`, `deploy/keycloak/atlas-realm.json`) issues them through the client-credentials grant, one client per persona. Each token carries `tenant`, `roles`, `scope` and `aud: atlas-mcp`. The issuer is pinned to `http://keycloak:8080/realms/atlas`, so a token requested from the host and one requested inside the network have the same `iss`.
+Scout only verifies tokens. Keycloak (realm `scout`, `deploy/keycloak/scout-realm.json`) issues them through the client-credentials grant, one client per persona. Each token carries `tenant`, `roles`, `scope` and `aud: scout-mcp`. The issuer is pinned to `http://keycloak:8080/realms/scout`, so a token requested from the host and one requested inside the network have the same `iss`.
 
 ## Approvals
 
@@ -68,7 +68,7 @@ Atlas only verifies tokens. Keycloak (realm `atlas`, `deploy/keycloak/atlas-real
 
 The tenant is set once, from the token, and every backend enforces it separately:
 
-- Postgres: row-level security on `app.tenant_id`, set inside a read-only transaction. The app connects as `atlas_app`, which cannot bypass it.
+- Postgres: row-level security on `app.tenant_id`, set inside a read-only transaction. The app connects as `scout_app`, which cannot bypass it.
 - Elasticsearch: a mandatory `_tenant` filter wrapped around the caller's query.
 - Qdrant: a mandatory `tenant` match under the caller's filter.
 - S3: every key is prefixed with the tenant.
@@ -76,17 +76,17 @@ The tenant is set once, from the token, and every backend enforces it separately
 
 ## Agents
 
-Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orchestrator.py`. The retriever may call six read-only tools, at most 6 iterations. The critic can send the draft back once. Agents reach the server through `AtlasMCPClient`, so server policy applies to them like any client. The LLM client sends prompts to one provider unless `ATLAS_LLM_FALLBACK=true`.
+Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orchestrator.py`. The retriever may call six read-only tools, at most 6 iterations. The critic can send the draft back once. Agents reach the server through `ScoutMCPClient`, so server policy applies to them like any client. The LLM client sends prompts to one provider unless `SCOUT_LLM_FALLBACK=true`.
 
 ## Observability
 
-Spans go to the OTel collector and Jaeger. Prometheus scrapes `atlas-mcp:8080/metrics` and evaluates `deploy/prometheus/alerts.yml` (down, server-side error ratio, open circuit, p95 latency, rate-limit spike), which has unit tests run by `promtool` in CI. Grafana provisions a Prometheus and a Jaeger datasource and the "Atlas MCP" dashboard from `deploy/grafana/`.
+Spans go to the OTel collector and Jaeger. Prometheus scrapes `scout-mcp:8080/metrics` and evaluates `deploy/prometheus/alerts.yml` (down, server-side error ratio, open circuit, p95 latency, rate-limit spike), which has unit tests run by `promtool` in CI. Grafana provisions a Prometheus and a Jaeger datasource and the "Scout MCP" dashboard from `deploy/grafana/`.
 
 ## Decisions
 
 - **Stateless sessions.** Any replica can serve any request. The MCP session is rebuilt per request, which is most of the per-call overhead in [PERFORMANCE.md](PERFORMANCE.md).
 - **Read and write are separate tools.** A prompt-injected agent with a SQL tool can drop a table. With read-only tools it gets a policy error.
-- **Keycloak, not a homegrown issuer.** Atlas stays a resource server.
+- **Keycloak, not a homegrown issuer.** Scout stays a resource server.
 - **SeaweedFS for S3.** MinIO stopped publishing container images, so the S3 store is SeaweedFS. The tools use plain S3 and work with any compatible store.
 - **Stores on an internal network.** Row-level security protects data from a buggy query. Network isolation protects it from anyone who skips the application.
 - **bge-base over bge-large.** About 1 point lower on MTEB retrieval, 3x fewer parameters, 5.7x smaller on disk.

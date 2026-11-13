@@ -1,4 +1,4 @@
-# Full Atlas MCP stack.
+# Full Scout MCP stack.
 #
 #   cp .env.example .env
 #   docker compose up -d --build --wait
@@ -14,7 +14,7 @@
 #
 # Every store requires credentials. The defaults below are for development only.
 
-name: atlas-mcp
+name: scout-mcp
 
 networks:
   app: {}
@@ -32,7 +32,7 @@ services:
       - caddy-data:/data            # keeps the local CA stable across restarts
     networks: [ app ]
     depends_on:
-      atlas-mcp: { condition: service_healthy }
+      scout-mcp: { condition: service_healthy }
     read_only: true
     tmpfs: [ /config ]
     cap_drop: [ ALL ]
@@ -49,41 +49,41 @@ services:
 
   # ── Application ───────────────────────────────────────────────────────
   # Gets only the settings it needs. The LLM keys in .env stay out of this container.
-  atlas-mcp:
+  scout-mcp:
     build: .
-    image: atlas-mcp:dev
+    image: scout-mcp:dev
     restart: unless-stopped
     networks: [ app, data ]
     environment:
-      ATLAS_TRANSPORT: http
-      ATLAS_HTTP_HOST: 0.0.0.0
-      ATLAS_HTTP_PORT: "8080"
-      ATLAS_STATELESS_MODE: "true"
-      ATLAS_AUTH_ISSUER: ${ATLAS_AUTH_ISSUER:-http://keycloak:8080/realms/atlas}
-      ATLAS_AUTH_AUDIENCE: ${ATLAS_AUTH_AUDIENCE:-atlas-mcp}
-      ATLAS_AUTH_JWKS_URL: ${ATLAS_AUTH_JWKS_URL:-http://keycloak:8080/realms/atlas/protocol/openid-connect/certs}
-      ATLAS_POLICY_DEFAULT_DENY: "true"
-      ATLAS_POLICY_FILE: config/policy.yaml
-      ATLAS_REDIS_URL: redis://:${REDIS_PASSWORD:-atlas-dev-redis}@redis:6379/0
-      ATLAS_OTEL_ENDPOINT: http://otel-collector:4317
-      ATLAS_AUDIT_LOG_PATH: /var/log/atlas/audit.jsonl
-      ATLAS_POSTGRES_DSN: ${ATLAS_POSTGRES_DSN:-postgresql://atlas_app:atlas_app@postgres:5432/atlas}
-      ATLAS_ELASTICSEARCH_URL: http://elasticsearch:9200
-      ATLAS_ELASTICSEARCH_PASSWORD: ${ATLAS_ELASTICSEARCH_PASSWORD:-atlas-dev-es}
-      ATLAS_VECTOR_DB_URL: http://qdrant:6333
-      ATLAS_VECTOR_DB_API_KEY: ${ATLAS_VECTOR_DB_API_KEY:-atlas-dev-qdrant}
-      ATLAS_S3_ENDPOINT: http://s3:8333
-      ATLAS_S3_BUCKET: atlas-mcp-data
-      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-atlasaccess}
-      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-atlas-dev-s3-secret}
+      SCOUT_TRANSPORT: http
+      SCOUT_HTTP_HOST: 0.0.0.0
+      SCOUT_HTTP_PORT: "8080"
+      SCOUT_STATELESS_MODE: "true"
+      SCOUT_AUTH_ISSUER: ${SCOUT_AUTH_ISSUER:-http://keycloak:8080/realms/scout}
+      SCOUT_AUTH_AUDIENCE: ${SCOUT_AUTH_AUDIENCE:-scout-mcp}
+      SCOUT_AUTH_JWKS_URL: ${SCOUT_AUTH_JWKS_URL:-http://keycloak:8080/realms/scout/protocol/openid-connect/certs}
+      SCOUT_POLICY_DEFAULT_DENY: "true"
+      SCOUT_POLICY_FILE: config/policy.yaml
+      SCOUT_REDIS_URL: redis://:${REDIS_PASSWORD:-scout-dev-redis}@redis:6379/0
+      SCOUT_OTEL_ENDPOINT: http://otel-collector:4317
+      SCOUT_AUDIT_LOG_PATH: /var/log/scout/audit.jsonl
+      SCOUT_POSTGRES_DSN: ${SCOUT_POSTGRES_DSN:-postgresql://scout_app:scout_app@postgres:5432/scout}
+      SCOUT_ELASTICSEARCH_URL: http://elasticsearch:9200
+      SCOUT_ELASTICSEARCH_PASSWORD: ${SCOUT_ELASTICSEARCH_PASSWORD:-scout-dev-es}
+      SCOUT_VECTOR_DB_URL: http://qdrant:6333
+      SCOUT_VECTOR_DB_API_KEY: ${SCOUT_VECTOR_DB_API_KEY:-scout-dev-qdrant}
+      SCOUT_S3_ENDPOINT: http://s3:8333
+      SCOUT_S3_BUCKET: scout-mcp-data
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-scoutaccess}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-scout-dev-s3-secret}
       AWS_DEFAULT_REGION: us-east-1
-      ATLAS_EMBEDDING_MODEL: ${ATLAS_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
-      ATLAS_RATE_LIMIT_DEFAULT_RPM: ${ATLAS_RATE_LIMIT_DEFAULT_RPM:-60}
-      ATLAS_RATE_LIMIT_BURST: ${ATLAS_RATE_LIMIT_BURST:-20}
-      ATLAS_RATE_LIMIT_PER_TOOL_OVERRIDES: ${ATLAS_RATE_LIMIT_PER_TOOL_OVERRIDES:-true}
-      ATLAS_CACHE_L1_TTL_SECONDS: ${ATLAS_CACHE_L1_TTL_SECONDS:-60}
-      ATLAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD: ${ATLAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD:-5}
-      ATLAS_CIRCUIT_BREAKER_RECOVERY_SECONDS: ${ATLAS_CIRCUIT_BREAKER_RECOVERY_SECONDS:-30}
+      SCOUT_EMBEDDING_MODEL: ${SCOUT_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
+      SCOUT_RATE_LIMIT_DEFAULT_RPM: ${SCOUT_RATE_LIMIT_DEFAULT_RPM:-60}
+      SCOUT_RATE_LIMIT_BURST: ${SCOUT_RATE_LIMIT_BURST:-20}
+      SCOUT_RATE_LIMIT_PER_TOOL_OVERRIDES: ${SCOUT_RATE_LIMIT_PER_TOOL_OVERRIDES:-true}
+      SCOUT_CACHE_L1_TTL_SECONDS: ${SCOUT_CACHE_L1_TTL_SECONDS:-60}
+      SCOUT_CIRCUIT_BREAKER_FAILURE_THRESHOLD: ${SCOUT_CIRCUIT_BREAKER_FAILURE_THRESHOLD:-5}
+      SCOUT_CIRCUIT_BREAKER_RECOVERY_SECONDS: ${SCOUT_CIRCUIT_BREAKER_RECOVERY_SECONDS:-30}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -92,7 +92,7 @@ services:
       s3-init: { condition: service_completed_successfully }
       otel-collector: { condition: service_started }
     volumes:
-      - atlas-logs:/var/log/atlas
+      - scout-logs:/var/log/scout
       - ./config:/app/config:ro
     read_only: true
     tmpfs: [ /tmp ]
@@ -104,16 +104,16 @@ services:
   # One-shot: loads demo tickets and documents into Elasticsearch and Qdrant.
   seed:
     build: .
-    image: atlas-mcp:dev
+    image: scout-mcp:dev
     profiles: [ seed ]
     networks: [ data ]
     entrypoint: [ "python", "/seed/seed.py" ]
     environment:
-      ATLAS_ELASTICSEARCH_URL: http://elasticsearch:9200
-      ATLAS_ELASTICSEARCH_PASSWORD: ${ATLAS_ELASTICSEARCH_PASSWORD:-atlas-dev-es}
-      ATLAS_VECTOR_DB_URL: http://qdrant:6333
-      ATLAS_VECTOR_DB_API_KEY: ${ATLAS_VECTOR_DB_API_KEY:-atlas-dev-qdrant}
-      ATLAS_EMBEDDING_MODEL: ${ATLAS_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
+      SCOUT_ELASTICSEARCH_URL: http://elasticsearch:9200
+      SCOUT_ELASTICSEARCH_PASSWORD: ${SCOUT_ELASTICSEARCH_PASSWORD:-scout-dev-es}
+      SCOUT_VECTOR_DB_URL: http://qdrant:6333
+      SCOUT_VECTOR_DB_API_KEY: ${SCOUT_VECTOR_DB_API_KEY:-scout-dev-qdrant}
+      SCOUT_EMBEDDING_MODEL: ${SCOUT_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
     volumes: [ "./deploy/seed:/seed:ro" ]
     depends_on:
       elasticsearch: { condition: service_healthy }
@@ -124,23 +124,23 @@ services:
   #   docker compose --profile copilot run --rm copilot "your question"
   copilot:
     build: .
-    image: atlas-mcp:dev
+    image: scout-mcp:dev
     profiles: [ copilot ]
     networks: [ app ]
-    entrypoint: [ "atlas-copilot" ]
+    entrypoint: [ "scout-copilot" ]
     environment:
-      ATLAS_MCP_URL: http://atlas-mcp:8080
-      ATLAS_TOKEN_URL: http://keycloak:8080/realms/atlas/protocol/openid-connect/token
-      ATLAS_CLIENT_ID: ${ATLAS_CLIENT_ID:-copilot-acme}
-      ATLAS_CLIENT_SECRET: ${ATLAS_CLIENT_SECRET:-dev-secret-copilot-acme}
-      ATLAS_TENANT: ${ATLAS_TENANT:-acme}
-      ATLAS_LLM_API_KEY: ${ATLAS_LLM_API_KEY:-}
-      ATLAS_LLM_MODEL: ${ATLAS_LLM_MODEL:-deepseek/deepseek-v4-flash:free}
-      ATLAS_LLM_BASE_URL: ${ATLAS_LLM_BASE_URL:-https://openrouter.ai/api/v1}
-      ATLAS_LLM_FALLBACK: ${ATLAS_LLM_FALLBACK:-false}
-      ATLAS_LLM_GROQ_KEY: ${ATLAS_LLM_GROQ_KEY:-}
+      SCOUT_MCP_URL: http://scout-mcp:8080
+      SCOUT_TOKEN_URL: http://keycloak:8080/realms/scout/protocol/openid-connect/token
+      SCOUT_CLIENT_ID: ${SCOUT_CLIENT_ID:-copilot-acme}
+      SCOUT_CLIENT_SECRET: ${SCOUT_CLIENT_SECRET:-dev-secret-copilot-acme}
+      SCOUT_TENANT: ${SCOUT_TENANT:-acme}
+      SCOUT_LLM_API_KEY: ${SCOUT_LLM_API_KEY:-}
+      SCOUT_LLM_MODEL: ${SCOUT_LLM_MODEL:-deepseek/deepseek-v4-flash:free}
+      SCOUT_LLM_BASE_URL: ${SCOUT_LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      SCOUT_LLM_FALLBACK: ${SCOUT_LLM_FALLBACK:-false}
+      SCOUT_LLM_GROQ_KEY: ${SCOUT_LLM_GROQ_KEY:-}
     depends_on:
-      atlas-mcp: { condition: service_healthy }
+      scout-mcp: { condition: service_healthy }
       keycloak: { condition: service_healthy }
     restart: "no"
 
@@ -167,7 +167,7 @@ services:
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
     volumes:
-      - ./deploy/keycloak/atlas-realm.json:/opt/keycloak/data/import/atlas-realm.json:ro
+      - ./deploy/keycloak/scout-realm.json:/opt/keycloak/data/import/scout-realm.json:ro
     depends_on:
       postgres: { condition: service_healthy }
     mem_limit: 1g
@@ -190,15 +190,15 @@ services:
     restart: unless-stopped
     networks: [ data ]
     environment:
-      POSTGRES_DB: atlas
-      POSTGRES_USER: atlas
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas}
+      POSTGRES_DB: scout
+      POSTGRES_USER: scout
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scout}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     mem_limit: 512m
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U atlas -d atlas" ]
+      test: [ "CMD-SHELL", "pg_isready -U scout -d scout" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -213,7 +213,7 @@ services:
     command:
       - redis-server
       - --requirepass
-      - ${REDIS_PASSWORD:-atlas-dev-redis}
+      - ${REDIS_PASSWORD:-scout-dev-redis}
       - --maxmemory
       - 256mb
       - --maxmemory-policy
@@ -227,7 +227,7 @@ services:
       timeout: 3s
       retries: 10
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-atlas-dev-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-scout-dev-redis}
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
@@ -237,7 +237,7 @@ services:
       discovery.type: single-node
       xpack.security.enabled: "true"
       xpack.security.http.ssl.enabled: "false"   # inside the internal network
-      ELASTIC_PASSWORD: ${ATLAS_ELASTICSEARCH_PASSWORD:-atlas-dev-es}
+      ELASTIC_PASSWORD: ${SCOUT_ELASTICSEARCH_PASSWORD:-scout-dev-es}
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
     volumes: [ "esdata:/usr/share/elasticsearch/data" ]
     mem_limit: 1280m
@@ -252,7 +252,7 @@ services:
     restart: unless-stopped
     networks: [ data ]
     environment:
-      QDRANT__SERVICE__API_KEY: ${ATLAS_VECTOR_DB_API_KEY:-atlas-dev-qdrant}
+      QDRANT__SERVICE__API_KEY: ${SCOUT_VECTOR_DB_API_KEY:-scout-dev-qdrant}
     volumes: [ "qdata:/qdrant/storage" ]
     mem_limit: 512m
     healthcheck:
@@ -270,12 +270,12 @@ services:
     entrypoint: [ "/bin/sh", "-c" ]
     command:
       - >-
-        printf '{"identities":[{"name":"atlas","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
+        printf '{"identities":[{"name":"scout","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
         "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json &&
         exec weed server -dir=/data -s3 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=128
     environment:
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-atlasaccess}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-atlas-dev-s3-secret}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-scoutaccess}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-scout-dev-s3-secret}
     volumes: [ "s3data:/data" ]
     mem_limit: 512m
     healthcheck:
@@ -287,15 +287,15 @@ services:
 
   # One-shot: create the bucket the S3 tools write to.
   s3-init:
-    image: atlas-mcp:dev
+    image: scout-mcp:dev
     build: .
     networks: [ data ]
     entrypoint: [ "python", "/init/init_bucket.py" ]
     environment:
-      ATLAS_S3_ENDPOINT: http://s3:8333
-      ATLAS_S3_BUCKET: atlas-mcp-data
-      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-atlasaccess}
-      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-atlas-dev-s3-secret}
+      SCOUT_S3_ENDPOINT: http://s3:8333
+      SCOUT_S3_BUCKET: scout-mcp-data
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-scoutaccess}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-scout-dev-s3-secret}
       AWS_DEFAULT_REGION: us-east-1
     volumes: [ "./deploy/s3:/init:ro" ]
     depends_on:
@@ -363,5 +363,5 @@ volumes:
   esdata: {}
   qdata: {}
   s3data: {}
-  atlas-logs: {}
+  scout-logs: {}
   caddy-data: {}

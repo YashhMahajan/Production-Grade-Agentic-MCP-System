@@ -1,4 +1,4 @@
--- Atlas-MCP Postgres schema.
+-- Scout-MCP Postgres schema.
 --
 -- This is the bare skeleton the support-copilot uses: customers, orders,
 -- tickets, documents. The interesting bit is Row-Level Security — every
@@ -56,10 +56,10 @@ ALTER TABLE orders    FORCE ROW LEVEL SECURITY;
 ALTER TABLE documents FORCE ROW LEVEL SECURITY;
 
 -- Dev password. Change it, and the DSN in .env, for any real deployment.
-CREATE ROLE atlas_app LOGIN PASSWORD 'atlas_app'
+CREATE ROLE scout_app LOGIN PASSWORD 'scout_app'
     NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-GRANT USAGE ON SCHEMA public TO atlas_app;
-GRANT SELECT ON customers, orders, documents TO atlas_app;
+GRANT USAGE ON SCHEMA public TO scout_app;
+GRANT SELECT ON customers, orders, documents TO scout_app;
 
 CREATE POLICY tenant_isolation_customers ON customers
     USING (tenant_id = current_setting('app.tenant_id', true));
@@ -98,7 +98,7 @@ INSERT INTO documents (id, tenant_id, title, body, url) VALUES
 
 -- ── Keycloak's own database ──────────────────────────────────────────────
 -- A separate role and database, so the identity provider shares the Postgres
--- server but nothing else: it cannot read atlas data, and atlas_app cannot read
+-- server but nothing else: it cannot read scout data, and scout_app cannot read
 -- its tables. Dev password; change it for any real deployment.
 CREATE ROLE keycloak LOGIN PASSWORD 'keycloak'
     NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
@@ -106,7 +106,7 @@ CREATE DATABASE keycloak OWNER keycloak;
 
 -- Postgres lets every role connect to every database by default. Close that: each
 -- application role may connect to its own database only.
-REVOKE CONNECT ON DATABASE atlas FROM PUBLIC;
-GRANT CONNECT ON DATABASE atlas TO atlas_app;
+REVOKE CONNECT ON DATABASE scout FROM PUBLIC;
+GRANT CONNECT ON DATABASE scout TO scout_app;
 REVOKE CONNECT ON DATABASE keycloak FROM PUBLIC;
 GRANT CONNECT ON DATABASE keycloak TO keycloak;

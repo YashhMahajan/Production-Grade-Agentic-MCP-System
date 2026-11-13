@@ -4,7 +4,7 @@ Every number here is one of two kinds: measured by a script in this repo, which 
 
 ## Measured: request overhead
 
-`python scripts/bench_pipeline.py 1000` sends tool calls through the whole HTTP path in one process: auth, tenant, MCP session, validation, policy, cache, audit, an OTel span, response. The tool body is faked and instant, so this is the cost of Atlas itself, not of Postgres or Qdrant.
+`python scripts/bench_pipeline.py 1000` sends tool calls through the whole HTTP path in one process: auth, tenant, MCP session, validation, policy, cache, audit, an OTel span, response. The tool body is faked and instant, so this is the cost of Scout itself, not of Postgres or Qdrant.
 
 Apple M2, Python 3.11.15, `mcp` 1.30.0. Three runs of 1000 calls each, milliseconds:
 

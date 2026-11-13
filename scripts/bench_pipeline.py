@@ -29,12 +29,12 @@ from opentelemetry.sdk.trace import TracerProvider
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from atlas_mcp.auth import middleware  # noqa: E402
-from atlas_mcp.cache.manager import CacheManager  # noqa: E402
-from atlas_mcp.config import ServerSettings  # noqa: E402
-from atlas_mcp.ratelimit.limiter import RateLimiter  # noqa: E402
-from atlas_mcp.server import AtlasServer, build_http_app  # noqa: E402
-from atlas_mcp.tools.atomic.postgres import PostgresQueryTool  # noqa: E402
+from scout_mcp.auth import middleware  # noqa: E402
+from scout_mcp.cache.manager import CacheManager  # noqa: E402
+from scout_mcp.config import ServerSettings  # noqa: E402
+from scout_mcp.ratelimit.limiter import RateLimiter  # noqa: E402
+from scout_mcp.server import ScoutServer, build_http_app  # noqa: E402
+from scout_mcp.tools.atomic.postgres import PostgresQueryTool  # noqa: E402
 from tests.conftest import HEADERS, FakeRedis, _Validator  # noqa: E402
 
 
@@ -79,13 +79,13 @@ async def main(n: int) -> str:
             patch.object(RateLimiter, "acquire", noop), \
             patch.object(PostgresQueryTool, "run", fake_run), \
             patch.object(middleware, "get_validator", lambda s: _Validator()), \
-            patch("atlas_mcp.tools.atomic.embeddings.get_embedder", lambda: object()), \
-            patch("atlas_mcp.server.init_tracing", lambda s: None), \
-            patch("atlas_mcp.server.get_tracer", lambda: tracer):
+            patch("scout_mcp.tools.atomic.embeddings.get_embedder", lambda: object()), \
+            patch("scout_mcp.server.init_tracing", lambda s: None), \
+            patch("scout_mcp.server.get_tracer", lambda: tracer):
         settings = ServerSettings(
             _env_file=None, policy_file=str(ROOT / "config/policy.yaml"),
             audit_log_path=f"{tmp}/audit.jsonl")
-        server = AtlasServer(settings)
+        server = ScoutServer(settings)
         app = build_http_app(server)
         started, stop = asyncio.Event(), asyncio.Event()
 

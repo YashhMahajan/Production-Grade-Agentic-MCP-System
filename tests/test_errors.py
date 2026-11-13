@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from atlas_mcp.errors.framework import (
+from scout_mcp.errors.framework import (
     AuthError,
     CircuitOpenError,
     RateLimitError,

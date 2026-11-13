@@ -2,12 +2,12 @@ apiVersion: 1
 datasources:
   - name: Prometheus
     type: prometheus
-    uid: atlas-prometheus
+    uid: scout-prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true
   - name: Jaeger
     type: jaeger
-    uid: atlas-jaeger
+    uid: scout-jaeger
     access: proxy
     url: http://jaeger:16686

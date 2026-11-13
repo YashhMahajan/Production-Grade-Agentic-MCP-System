@@ -4,7 +4,7 @@
 
 Most MCP examples stop at a tool that returns "hello world". Putting an MCP server in front of real company data raises problems the examples skip: one customer seeing another's rows, an agent looping on a rate limit, a prompt-injected agent writing to a database, nobody able to say afterwards who asked for what.
 
-I built Atlas MCP to show how I handled those, in code small enough to read, and to be something a team can deploy.
+I built Scout MCP to show how I handled those, in code small enough to read, and to be something a team can deploy.
 
 ## Who it is for
 
@@ -25,7 +25,7 @@ I built Atlas MCP to show how I handled those, in code small enough to read, and
 
 ## Non-goals
 
-- Issuing tokens. Atlas verifies JWTs from an identity provider; it does not replace one.
+- Issuing tokens. Scout verifies JWTs from an identity provider; it does not replace one.
 - Being a general agent framework. The copilot is one concrete example.
 - Supporting every vector database or LLM provider.
 - Running on the author's laptop under Docker. Integration runs belong in CI.

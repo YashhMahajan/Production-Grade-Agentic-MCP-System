@@ -1,6 +1,6 @@
-# Atlas MCP
+# Scout MCP
 
-I built Atlas MCP to see what it takes to put an MCP server in front of real company data and not regret it later. It is one server that gives AI agents controlled access to Postgres, Elasticsearch, a vector database and S3, plus a four-agent support copilot that uses it. Everything runs from one `docker compose up`.
+I built Scout MCP to see what it takes to put an MCP server in front of real company data and not regret it later. It is one server that gives AI agents controlled access to Postgres, Elasticsearch, a vector database and S3, plus a four-agent support copilot that uses it. Everything runs from one `docker compose up`.
 
 I started from Fareed Khan's article [Building the 11 Layers of a Production-Grade MCP Server + Agentic System](https://levelup.gitconnected.com/building-the-11-layers-of-a-production-grade-mcp-server-agentic-system-de92127aca6f). It gave me the module layout and the twelve concerns. When I ran the code from the article, most of the request path did not work, so a large part of this repo is the fixing: [docs/ISSUES.md](docs/ISSUES.md) lists every defect I found and the test that now guards it.
 
@@ -24,7 +24,7 @@ docker compose up -d --build --wait          # builds the image, starts 14 servi
 docker compose --profile seed run --rm seed  # loads demo tickets and documents
 ```
 
-Ask the copilot a question. It needs an OpenRouter key in `ATLAS_LLM_API_KEY`:
+Ask the copilot a question. It needs an OpenRouter key in `SCOUT_LLM_API_KEY`:
 
 ```bash
 docker compose --profile copilot run --rm copilot \
@@ -34,7 +34,7 @@ docker compose --profile copilot run --rm copilot \
 Or talk to the server yourself. Get a token for the `acme` tenant, then list the tools:
 
 ```bash
-TOKEN=$(curl -s http://localhost:8081/realms/atlas/protocol/openid-connect/token \
+TOKEN=$(curl -s http://localhost:8081/realms/scout/protocol/openid-connect/token \
   -d grant_type=client_credentials -d client_id=copilot-acme \
   -d client_secret=dev-secret-copilot-acme | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
 
@@ -52,18 +52,18 @@ What is reachable from your machine, all on `127.0.0.1`:
 |------|---------|-----|
 | 8443 | Caddy | The only way in to the MCP server. TLS, security headers, 1 MB body limit, only `/mcp`, `/approvals`, discovery and `/healthz` forwarded. |
 | 8081 | Keycloak | Token endpoint. The admin console needs `127.0.0.1 keycloak` in `/etc/hosts` because the issuer is pinned to `keycloak:8080`. |
-| 3000 | Grafana | Dashboard "Atlas MCP" (`admin` / `admin`). |
+| 3000 | Grafana | Dashboard "Scout MCP" (`admin` / `admin`). |
 | 9090 | Prometheus | Metrics and alert rules. |
 | 16686 | Jaeger | Traces. |
 
-Postgres, Redis, Elasticsearch, Qdrant and the S3 store (SeaweedFS) are on an internal network with no route to the host. Use `docker compose exec postgres psql -U atlas_app atlas` to look inside.
+Postgres, Redis, Elasticsearch, Qdrant and the S3 store (SeaweedFS) are on an internal network with no route to the host. Use `docker compose exec postgres psql -U scout_app scout` to look inside.
 
 ## How a call travels
 
 ```mermaid
 flowchart LR
   A[Agent] -->|HTTPS + JWT| C[Caddy]
-  C --> S[Atlas MCP]
+  C --> S[Scout MCP]
   S -->|JWKS| K[Keycloak]
   S --> P[(Postgres<br/>row-level security)]
   S --> E[(Elasticsearch)]
@@ -99,10 +99,10 @@ GitHub Actions runs four jobs on every push: the fast tests, static validation o
 
 The defaults are for development. At minimum:
 
-- Change every password and secret in `.env`, the client secrets in `deploy/keycloak/atlas-realm.json`, and the `atlas_app` and `keycloak` passwords in `deploy/sql/init.sql`.
+- Change every password and secret in `.env`, the client secrets in `deploy/keycloak/scout-realm.json`, and the `scout_app` and `keycloak` passwords in `deploy/sql/init.sql`.
 - Run Keycloak with `start`, TLS and a real hostname instead of `start-dev`.
 - Replace Caddy's `tls internal` with a real certificate.
-- Decide which LLM providers may see customer text. `ATLAS_LLM_FALLBACK` is off by default.
+- Decide which LLM providers may see customer text. `SCOUT_LLM_FALLBACK` is off by default.
 - Redis is a single node, so an outage stops rate limiting, caching and approvals.
 
 [docs/ISSUES.md](docs/ISSUES.md) lists what I know is still open.
@@ -110,7 +110,7 @@ The defaults are for development. At minimum:
 ## Layout
 
 ```
-src/atlas_mcp/   server, auth, policy, tools (atomic, composed, workflow), reliability, cache, observability, agents
+src/scout_mcp/   server, auth, policy, tools (atomic, composed, workflow), reliability, cache, observability, agents
 config/          policy.yaml, outbound HTTP allowlist
 deploy/          compose support files: caddy, keycloak, postgres, prometheus, grafana, otel, seed
 scripts/         benchmarks

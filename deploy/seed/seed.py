@@ -9,7 +9,7 @@ stores so the copilot has tickets and documents to find:
   UUIDs, so the point id is a UUID derived from the document id and the original
   id is stored in the payload as `doc_id`.
 
-Run it inside the atlas-mcp image so it embeds with the same model as the server:
+Run it inside the scout-mcp image so it embeds with the same model as the server:
 
     docker compose run --rm seed
 
@@ -25,12 +25,12 @@ import httpx
 from elasticsearch import Elasticsearch
 from fastembed import TextEmbedding
 
-ES_URL = os.environ.get("ATLAS_ELASTICSEARCH_URL", "http://localhost:9200")
-ES_USER = os.environ.get("ATLAS_ELASTICSEARCH_USER", "elastic")
-ES_PASSWORD = os.environ.get("ATLAS_ELASTICSEARCH_PASSWORD")
-QDRANT_KEY = os.environ.get("ATLAS_VECTOR_DB_API_KEY")
-QDRANT_URL = os.environ.get("ATLAS_VECTOR_DB_URL", "http://localhost:6333").rstrip("/")
-MODEL = os.environ.get("ATLAS_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+ES_URL = os.environ.get("SCOUT_ELASTICSEARCH_URL", "http://localhost:9200")
+ES_USER = os.environ.get("SCOUT_ELASTICSEARCH_USER", "elastic")
+ES_PASSWORD = os.environ.get("SCOUT_ELASTICSEARCH_PASSWORD")
+QDRANT_KEY = os.environ.get("SCOUT_VECTOR_DB_API_KEY")
+QDRANT_URL = os.environ.get("SCOUT_VECTOR_DB_URL", "http://localhost:6333").rstrip("/")
+MODEL = os.environ.get("SCOUT_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 COLLECTION = "support_docs"
 
 # Same rows as the `documents` table in init.sql.
@@ -76,7 +76,7 @@ TICKETS = [
 
 
 def point_id(doc_id: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"atlas/{doc_id}"))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"scout/{doc_id}"))
 
 
 def seed_elasticsearch() -> None:
@@ -94,7 +94,7 @@ def seed_elasticsearch() -> None:
 def seed_qdrant() -> None:
     # The image has the model baked into this directory, and the seed container has no
     # route to the internet, so it must be read from there, never downloaded.
-    model = TextEmbedding(model_name=MODEL, cache_dir=os.environ.get("ATLAS_EMBEDDING_CACHE_DIR"))
+    model = TextEmbedding(model_name=MODEL, cache_dir=os.environ.get("SCOUT_EMBEDDING_CACHE_DIR"))
     texts = [f'{d["title"]}. {d["body"]}' for d in DOCUMENTS]
     vectors = [v.tolist() for v in model.embed(texts)]
     dim = len(vectors[0])

@@ -4,8 +4,8 @@ Unlike bench_pipeline.py this includes Postgres, Elasticsearch, Qdrant, Redis,
 the embedding model, TLS and the reverse proxy. It needs the stack up and seeded,
 and per-call rate limits raised so the limiter does not shape the result:
 
-    ATLAS_RATE_LIMIT_DEFAULT_RPM=600000 ATLAS_RATE_LIMIT_BURST=100000 \\
-    ATLAS_RATE_LIMIT_PER_TOOL_OVERRIDES=false docker compose up -d atlas-mcp
+    SCOUT_RATE_LIMIT_DEFAULT_RPM=600000 SCOUT_RATE_LIMIT_BURST=100000 \\
+    SCOUT_RATE_LIMIT_PER_TOOL_OVERRIDES=false docker compose up -d scout-mcp
     python scripts/bench_stack.py [calls_per_scenario] [concurrent_seconds]
 
 Prints one JSON document. A "cache speedup" is the miss p50 divided by the hit p50,
@@ -24,11 +24,11 @@ import time
 
 import httpx
 
-from atlas_mcp.agents.mcp_client import _decode_body, fetch_token
+from scout_mcp.agents.mcp_client import _decode_body, fetch_token
 
-MCP_URL = os.environ.get("ATLAS_E2E_MCP_URL", "https://localhost:8443")
+MCP_URL = os.environ.get("SCOUT_E2E_MCP_URL", "https://localhost:8443")
 TOKEN_URL = os.environ.get(
-    "ATLAS_E2E_TOKEN_URL", "http://localhost:8081/realms/atlas/protocol/openid-connect/token")
+    "SCOUT_E2E_TOKEN_URL", "http://localhost:8081/realms/scout/protocol/openid-connect/token")
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
 

@@ -4,7 +4,7 @@ Every store, what is in it, and how tenancy is enforced there. Seed data is in `
 
 ## Postgres
 
-Two databases on one server: `atlas` (this section) and `keycloak` (owned by its own `keycloak` role; `atlas_app` has no access to it).
+Two databases on one server: `scout` (this section) and `keycloak` (owned by its own `keycloak` role; `scout_app` has no access to it).
 
 Tables: `customers`, `orders`, `documents`. All have `tenant_id TEXT NOT NULL`.
 
@@ -17,7 +17,7 @@ Tables: `customers`, `orders`, `documents`. All have `tenant_id TEXT NOT NULL`.
 Isolation:
 
 - RLS is enabled and **forced** on all three. Policy: `tenant_id = current_setting('app.tenant_id', true)`. If the setting is missing the comparison is NULL and no rows come back.
-- Two roles. `atlas` (the compose superuser) creates the schema. `atlas_app` has `SELECT` on the three tables, `NOSUPERUSER NOBYPASSRLS`. The server must connect as `atlas_app`: superusers skip RLS entirely.
+- Two roles. `scout` (the compose superuser) creates the schema. `scout_app` has `SELECT` on the three tables, `NOSUPERUSER NOBYPASSRLS`. The server must connect as `scout_app`: superusers skip RLS entirely.
 - `postgres.query` runs in a read-only transaction and calls `set_config('app.tenant_id', $1, true)` first. The `true` makes it transaction-local.
 
 ## Tokens (Keycloak)
@@ -30,7 +30,7 @@ What the server reads from a verified access token:
 | `tenant` | The tenant every query is pinned to |
 | `roles` | Space-separated policy subjects, for example `role:support_copilot` |
 | `scope` | Space-separated tool scopes, for example `tool:postgres:read` |
-| `aud` | Must include `atlas-mcp` |
+| `aud` | Must include `scout-mcp` |
 | `act.sub` | Optional: the human who delegated to the agent, recorded as `delegator` |
 
 Realm clients: `copilot-acme`, `copilot-globex` (read scopes), `writer-acme` (`s3` read and write), `reviewer-acme` (`approval:review`). Their secrets in the realm file are for development.
@@ -64,27 +64,27 @@ Password required. Memory capped at 256 MB with `volatile-lru`, no snapshots: ev
 
 | Key | Holds | TTL |
 |-----|-------|-----|
-| `atlas:<tool>:<24 hex>` | cached tool result, hash of tool + tenant + arguments | per tool, L2 default 600 s |
-| `atlas:rl:<tenant>:<tool>` | token bucket: `tokens`, `last_ms` | 3600 s |
-| `atlas:approval:<id>` | pending approval: tenant, caller, delegator, tool, arguments, state, approver | 3600 s, deleted when used |
+| `scout:<tool>:<24 hex>` | cached tool result, hash of tool + tenant + arguments | per tool, L2 default 600 s |
+| `scout:rl:<tenant>:<tool>` | token bucket: `tokens`, `last_ms` | 3600 s |
+| `scout:approval:<id>` | pending approval: tenant, caller, delegator, tool, arguments, state, approver | 3600 s, deleted when used |
 | `<cache key>:lock` | stampede lock | 5 s |
 
 ## S3 (SeaweedFS in compose)
 
-Bucket `atlas-mcp-data`, created by the `s3-init` service. Object key is `<tenant>/<key>`. A tenant cannot name another tenant's prefix because the server adds its own.
+Bucket `scout-mcp-data`, created by the `s3-init` service. Object key is `<tenant>/<key>`. A tenant cannot name another tenant's prefix because the server adds its own.
 
 ## Audit log
 
-Newline-delimited JSON at `ATLAS_AUDIT_LOG_PATH`, one line per tool call, also printed to stdout. Fields: `ts`, `trace_id`, `tenant`, `caller`, `delegator`, `tool`, `args_hash`, `duration_ms`, `status`, `error_code`. Arguments are hashed with SHA-256 and never written, because they can hold personal data.
+Newline-delimited JSON at `SCOUT_AUDIT_LOG_PATH`, one line per tool call, also printed to stdout. Fields: `ts`, `trace_id`, `tenant`, `caller`, `delegator`, `tool`, `args_hash`, `duration_ms`, `status`, `error_code`. Arguments are hashed with SHA-256 and never written, because they can hold personal data.
 
 ## Metrics
 
 | Name | Labels |
 |------|--------|
-| `atlas_tool_calls_total` | `tool`, `status` (`ok` or an error code) |
-| `atlas_tool_latency_seconds` | `tool` |
-| `atlas_cache_hits_total`, `atlas_cache_misses_total` | `tool` |
-| `atlas_rate_limited_total` | `tool` |
-| `atlas_circuit_state` | `tool` (0 closed, 1 half-open, 2 open) |
+| `scout_tool_calls_total` | `tool`, `status` (`ok` or an error code) |
+| `scout_tool_latency_seconds` | `tool` |
+| `scout_cache_hits_total`, `scout_cache_misses_total` | `tool` |
+| `scout_rate_limited_total` | `tool` |
+| `scout_circuit_state` | `tool` (0 closed, 1 half-open, 2 open) |
 
 No tenant or caller labels: they multiply the series count. Unregistered tool names are recorded as `unknown`.

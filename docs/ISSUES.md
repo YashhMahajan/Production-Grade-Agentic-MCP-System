@@ -15,7 +15,7 @@ What I found when I audited the repo, what I did about it, and what is still ope
 | 7 | `policy.yaml` was never loaded; the registry used an allow-all engine | Server loads it at startup and fails if missing | `test_default_deny_applies_to_roles_without_a_rule` |
 | 8 | Tool errors became a 15-line pydantic failure | Returned as `isError` with code, retryable, hint | `test_unknown_tool_returns_a_structured_error` |
 | 9 | `SET LOCAL app.tenant_id = $1` is invalid SQL and does nothing outside a transaction | `set_config(..., true)` inside a transaction | `test_postgres_sets_tenant_inside_a_read_only_transaction` |
-| 10 | The compose user is a superuser, which skips RLS | `atlas_app` role, forced RLS | SQL reviewed, not run (see open) |
+| 10 | The compose user is a superuser, which skips RLS | `scout_app` role, forced RLS | SQL reviewed, not run (see open) |
 | 11 | A `LIMIT` was always appended, so any query with its own `LIMIT` failed | Cursor fetch of `max_rows + 1` | `test_postgres_does_not_append_limit_to_the_query` |
 | 12 | Elasticsearch client 9.x against a 8.14 server | `elasticsearch>=8.14,<9` | pin only |
 | 13 | `tickets` index and `support_docs` collection were never created; Qdrant ids could not match Postgres ids | `deploy/seed/seed.py`, `doc_id` in payload | `test_semantic_search_hydrates_by_payload_doc_id` |
@@ -33,14 +33,14 @@ Found while fixing:
 | 20 | Tracer was configured but nothing created spans; audit `trace_id` was always null | One span per call |
 | 21 | `/readyz` always said ready | 503 until startup is done and Redis answers |
 | 22 | Audit, approval and retry code existed but was not called; `s3.put_object` ran with no approval | Wired into the pipeline |
-| 23 | The discovery document hard-coded the issuer | Uses `ATLAS_AUTH_ISSUER` |
+| 23 | The discovery document hard-coded the issuer | Uses `SCOUT_AUTH_ISSUER` |
 | 24 | Unknown tool names became metric labels, an unbounded series count | Recorded as `unknown` |
 
 ## Open
 
 **Cannot run end to end yet**
-- No token issuer. The server verifies JWTs against `ATLAS_AUTH_JWKS_URL`, and nothing in compose issues one, so `ATLAS_MCP_TOKEN=dev-token-change-me` is rejected. The copilot cannot reach the server on a fresh checkout. Next on my list.
-- Nothing has been run against real services. Compose, the Dockerfile, `init.sql` and `seed.py` are written and parsed but not executed. The RLS and `atlas_app` role in particular are unverified until a CI job runs them against Postgres.
+- No token issuer. The server verifies JWTs against `SCOUT_AUTH_JWKS_URL`, and nothing in compose issues one, so `SCOUT_MCP_TOKEN=dev-token-change-me` is rejected. The copilot cannot reach the server on a fresh checkout. Next on my list.
+- Nothing has been run against real services. Compose, the Dockerfile, `init.sql` and `seed.py` are written and parsed but not executed. The RLS and `scout_app` role in particular are unverified until a CI job runs them against Postgres.
 
 **Built but not connected**
 - `reliability/atba.py` (timeout budgets) and `agents/memory.py`.
@@ -55,4 +55,4 @@ Found while fixing:
 - `mcp` 2.x needs a port to its new handler API.
 - `docs/DEPLOYMENT.md` and `docs/AGENT_SYSTEM.md` predate these changes and I have not reviewed them.
 
-**You need to update `.env`** (I do not touch it): `ATLAS_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5`, `ATLAS_POSTGRES_DSN` with `atlas_app` (see `.env.example`), and the vector dimension setting to 768.
+**You need to update `.env`** (I do not touch it): `SCOUT_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5`, `SCOUT_POSTGRES_DSN` with `scout_app` (see `.env.example`), and the vector dimension setting to 768.

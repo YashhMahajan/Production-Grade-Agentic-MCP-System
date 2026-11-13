@@ -1,6 +1,6 @@
 """Create the S3 bucket the server writes to. Safe to run repeatedly.
 
-Runs once inside the atlas-mcp image (it already has boto3), so no extra image has
+Runs once inside the scout-mcp image (it already has boto3), so no extra image has
 to be pulled and pinned. The S3 gateway can take a few seconds after its container
 reports healthy, so this retries for up to a minute.
 """
@@ -12,8 +12,8 @@ import time
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-endpoint = os.environ["ATLAS_S3_ENDPOINT"]
-bucket = os.environ["ATLAS_S3_BUCKET"]
+endpoint = os.environ["SCOUT_S3_ENDPOINT"]
+bucket = os.environ["SCOUT_S3_BUCKET"]
 s3 = boto3.client("s3", endpoint_url=endpoint)
 
 last = None

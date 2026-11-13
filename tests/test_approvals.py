@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from atlas_mcp.tools.atomic.s3_storage import S3PutTool
+from scout_mcp.tools.atomic.s3_storage import S3PutTool
 
 from tests.conftest import HEADERS, call
 

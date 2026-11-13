@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from atlas_mcp.tools.atomic.postgres import PostgresQueryTool
+from scout_mcp.tools.atomic.postgres import PostgresQueryTool
 
 from tests.conftest import call
 
@@ -34,7 +34,7 @@ async def test_slow_tool_hits_its_timeout_then_the_circuit_opens(app_client, mon
     assert len(runs) == ran_before  # the open circuit never reached the tool
 
     text = (await app_client.get("/metrics")).text
-    assert 'atlas_circuit_state{tool="postgres.query"} 2.0' in text
+    assert 'scout_circuit_state{tool="postgres.query"} 2.0' in text
 
 
 async def test_circuit_gauge_is_zero_while_healthy(app_client, monkeypatch):
@@ -42,11 +42,11 @@ async def test_circuit_gauge_is_zero_while_healthy(app_client, monkeypatch):
         return {"columns": [], "rows": [], "row_count": 0, "truncated": False}
     monkeypatch.setattr(PostgresQueryTool, "run", fast)
     await call(app_client, "postgres.query", SQL)
-    assert 'atlas_circuit_state{tool="postgres.query"} 0.0' in (await app_client.get("/metrics")).text
+    assert 'scout_circuit_state{tool="postgres.query"} 0.0' in (await app_client.get("/metrics")).text
 
 
 async def test_transient_failures_are_retried_inside_one_call(app_client, monkeypatch):
-    from atlas_mcp.errors.framework import UpstreamError
+    from scout_mcp.errors.framework import UpstreamError
     attempts = []
 
     async def flaky(self, tenant, args):

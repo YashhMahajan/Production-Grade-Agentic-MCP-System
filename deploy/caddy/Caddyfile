@@ -33,7 +33,7 @@ https://localhost:8443 {
 
 	@public path /mcp /approvals/* /.well-known/mcp-server /healthz
 	handle @public {
-		reverse_proxy atlas-mcp:8080
+		reverse_proxy scout-mcp:8080
 	}
 
 	handle {

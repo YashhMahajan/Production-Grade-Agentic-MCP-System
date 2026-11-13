@@ -1,4 +1,4 @@
-# OpenTelemetry Collector configuration — this ships traces from all Atlas agents
+# OpenTelemetry Collector configuration — this ships traces from all Scout agents
 
 receivers:
   otlp:

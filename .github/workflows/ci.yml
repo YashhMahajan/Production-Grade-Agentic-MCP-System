@@ -57,7 +57,7 @@ jobs:
         run: docker run --rm -v "$PWD/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.8-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Realm and dashboard are valid JSON
         run: |
-          python3 -c "import json;json.load(open('deploy/keycloak/atlas-realm.json'));json.load(open('deploy/grafana/dashboards/atlas.json'))"
+          python3 -c "import json;json.load(open('deploy/keycloak/scout-realm.json'));json.load(open('deploy/grafana/dashboards/scout.json'))"
       - name: Dockerfile lint
         run: docker run --rm -i hadolint/hadolint:v2.12.0 hadolint --failure-threshold error - < Dockerfile
 
@@ -84,21 +84,21 @@ jobs:
       - name: Service status and server startup log
         run: |
           docker compose ps
-          echo "::group::atlas-mcp startup log"
-          docker compose logs --no-color --tail 60 atlas-mcp
+          echo "::group::scout-mcp startup log"
+          docker compose logs --no-color --tail 60 scout-mcp
           echo "::endgroup::"
 
       - name: Seed demo data
         run: docker compose --profile seed run --rm seed
 
       - name: End-to-end tests
-        run: ATLAS_E2E=1 pytest tests/e2e -v --junitxml=e2e-results.xml
+        run: SCOUT_E2E=1 pytest tests/e2e -v --junitxml=e2e-results.xml
 
       - name: Raise rate limits so the benchmark measures the stack, not the limiter
         run: |
-          ATLAS_RATE_LIMIT_DEFAULT_RPM=600000 ATLAS_RATE_LIMIT_BURST=100000 \
-          ATLAS_RATE_LIMIT_PER_TOOL_OVERRIDES=false \
-          docker compose up -d --wait --wait-timeout 300 atlas-mcp
+          SCOUT_RATE_LIMIT_DEFAULT_RPM=600000 SCOUT_RATE_LIMIT_BURST=100000 \
+          SCOUT_RATE_LIMIT_PER_TOOL_OVERRIDES=false \
+          docker compose up -d --wait --wait-timeout 300 scout-mcp
 
       - name: Benchmark with real backends
         run: |
@@ -123,7 +123,7 @@ jobs:
         run: |
           docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}" | tee docker-stats.txt
           { echo '### Memory and CPU per container'; echo; echo '```'; cat docker-stats.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          docker images atlas-mcp:dev --format "Image atlas-mcp:dev is {{.Size}}" | tee -a docker-stats.txt >> "$GITHUB_STEP_SUMMARY"
+          docker images scout-mcp:dev --format "Image scout-mcp:dev is {{.Size}}" | tee -a docker-stats.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Logs on failure
         if: failure()
@@ -169,12 +169,12 @@ jobs:
       - name: Dockerfile misconfiguration
         run: docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.76.2 config --severity HIGH,CRITICAL --exit-code 1 /src
       - name: Build the image
-        run: docker build -t atlas-mcp:scan .
+        run: docker build -t scout-mcp:scan .
       - name: Image vulnerabilities (fail on fixable CRITICAL)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
-            image --severity CRITICAL --ignore-unfixed --exit-code 1 atlas-mcp:scan
+            image --severity CRITICAL --ignore-unfixed --exit-code 1 scout-mcp:scan
       - name: Image vulnerability counts (informational)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
-            image --severity HIGH,CRITICAL --ignore-unfixed --format table atlas-mcp:scan | tee trivy-image.txt | tail -40 || true
+            image --severity HIGH,CRITICAL --ignore-unfixed --format table scout-mcp:scan | tee trivy-image.txt | tail -40 || true

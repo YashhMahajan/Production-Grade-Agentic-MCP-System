@@ -1,11 +1,11 @@
 [project]
-name = "atlas-mcp"
+name = "scout-mcp"
 version = "0.3.0"
 description = "A production-grade MCP server for enterprise agents."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Atlas-MCP Contributors" }]
+authors = [{ name = "Scout-MCP Contributors" }]
 
 dependencies = [
   # MCP core
@@ -51,15 +51,15 @@ dev = [
 ]
 
 [project.scripts]
-atlas-mcp = "atlas_mcp.server:main"
-atlas-copilot = "atlas_mcp.agents.cli:main"
+scout-mcp = "scout_mcp.server:main"
+scout-copilot = "scout_mcp.agents.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/atlas_mcp"]
+packages = ["src/scout_mcp"]
 
 [tool.ruff]
 line-length = 100

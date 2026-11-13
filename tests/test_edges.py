@@ -9,11 +9,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from atlas_mcp import __version__
-from atlas_mcp.agents import base
-from atlas_mcp.agents.mcp_client import fetch_token
-from atlas_mcp.errors.framework import PolicyError
-from atlas_mcp.tools.atomic import http_client
+from scout_mcp import __version__
+from scout_mcp.agents import base
+from scout_mcp.agents.mcp_client import fetch_token
+from scout_mcp.errors.framework import PolicyError
+from scout_mcp.tools.atomic import http_client
 
 
 def fake_dns(ip: str):
@@ -50,12 +50,12 @@ class RecordingClient:
 async def attempts(monkeypatch, fallback: str | None) -> list[str]:
     RecordingClient.urls = []
     monkeypatch.setattr(base.httpx, "AsyncClient", RecordingClient)
-    monkeypatch.setenv("ATLAS_LLM_API_KEY", "k")
-    monkeypatch.setenv("ATLAS_LLM_GROQ_KEY", "g")
+    monkeypatch.setenv("SCOUT_LLM_API_KEY", "k")
+    monkeypatch.setenv("SCOUT_LLM_GROQ_KEY", "g")
     if fallback is None:
-        monkeypatch.delenv("ATLAS_LLM_FALLBACK", raising=False)
+        monkeypatch.delenv("SCOUT_LLM_FALLBACK", raising=False)
     else:
-        monkeypatch.setenv("ATLAS_LLM_FALLBACK", fallback)
+        monkeypatch.setenv("SCOUT_LLM_FALLBACK", fallback)
     with pytest.raises(httpx.ConnectError):
         await base.LLM().complete("sys", [{"role": "user", "content": "hi"}])
     return RecordingClient.urls
@@ -91,16 +91,16 @@ def test_reported_version_matches_pyproject():
 
 
 def test_roles_claim_accepts_a_list_or_a_string():
-    from atlas_mcp.auth.oauth import _roles
+    from scout_mcp.auth.oauth import _roles
     assert _roles("role:a b") == {"role:a", "role:b"}
     assert _roles(["role:a", "b"]) == {"role:a", "role:b"}
     assert _roles([]) == frozenset()
 
 
 def test_clients_send_credentials_to_elasticsearch_and_qdrant(monkeypatch):
-    import atlas_mcp.tools.atomic.elasticsearch as es_mod
-    from atlas_mcp.config import ServerSettings
-    from atlas_mcp.auth.policy import PolicyEngine
+    import scout_mcp.tools.atomic.elasticsearch as es_mod
+    from scout_mcp.config import ServerSettings
+    from scout_mcp.auth.policy import PolicyEngine
     seen = {}
 
     class Fake:
@@ -120,9 +120,9 @@ def test_a_token_whose_key_is_unknown_is_rejected_not_a_server_error():
     # PyJWKClientError for that, which used to escape as an HTTP 500.
     import jwt
 
-    from atlas_mcp.auth.oauth import TokenValidator
-    from atlas_mcp.config import ServerSettings
-    from atlas_mcp.errors.framework import AuthError
+    from scout_mcp.auth.oauth import TokenValidator
+    from scout_mcp.config import ServerSettings
+    from scout_mcp.errors.framework import AuthError
 
     validator = TokenValidator(ServerSettings(_env_file=None))
 

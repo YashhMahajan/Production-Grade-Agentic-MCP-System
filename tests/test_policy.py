@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from atlas_mcp.auth.policy import PolicyEngine, Rule
-from atlas_mcp.errors.framework import PolicyError
+from scout_mcp.auth.policy import PolicyEngine, Rule
+from scout_mcp.errors.framework import PolicyError
 
 
 def _engine(rules: list[Rule], default_deny: bool = True) -> PolicyEngine:

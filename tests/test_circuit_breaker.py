@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from atlas_mcp.errors.framework import CircuitOpenError, UpstreamError, ValidationError
-from atlas_mcp.reliability.circuit_breaker import CircuitBreaker, State
+from scout_mcp.errors.framework import CircuitOpenError, UpstreamError, ValidationError
+from scout_mcp.reliability.circuit_breaker import CircuitBreaker, State
 
 
 async def _transient_failure():

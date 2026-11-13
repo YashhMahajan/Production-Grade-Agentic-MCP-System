@@ -4,7 +4,7 @@ Read this first. It is the project's working memory and stands in for CLAUDE.md:
 
 ## What this is
 
-Atlas MCP: a multi-tenant MCP server that gives agents access to Postgres, Elasticsearch, Qdrant and S3, plus a four-agent support copilot (Planner, Retriever, Synthesizer, Critic). The owner built it from the structure of Fareed Khan's article "Building the 11 Layers of a Production-Grade MCP Server + Agentic System" and wants it to be something engineers learn from and companies deploy. Repo: github.com/YashhMahajan/Production-Grade-Agentic-MCP-System.
+Scout MCP: a multi-tenant MCP server that gives agents access to Postgres, Elasticsearch, Qdrant and S3, plus a four-agent support copilot (Planner, Retriever, Synthesizer, Critic). The owner built it from the structure of Fareed Khan's article "Building the 11 Layers of a Production-Grade MCP Server + Agentic System" and wants it to be something engineers learn from and companies deploy. Repo: github.com/YashhMahajan/Production-Grade-Agentic-MCP-System.
 
 Docs in `docs/`: ARCHITECTURE, ISSUES, PRD, AGENTS, PERFORMANCE, DATA-MODEL. Also older DEPLOYMENT.md and AGENT_SYSTEM.md (not reviewed since the 0.2.0 changes). `docs/STARTUP.md` is local and gitignored.
 
@@ -19,7 +19,7 @@ Docs in `docs/`: ARCHITECTURE, ISSUES, PRD, AGENTS, PERFORMANCE, DATA-MODEL. Als
 ## Rules (the owner's, stated in session)
 
 - Never start Docker or anything heavy on the owner's Mac. Integration runs go in GitHub Actions.
-- Do not touch `.env` (real secrets). Edit `.env.example` and say which `.env` lines to change. Current `.env` still needs: `ATLAS_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5`, `ATLAS_POSTGRES_DSN` using `atlas_app`, vector dimension 768.
+- Do not touch `.env` (real secrets). Edit `.env.example` and say which `.env` lines to change. Current `.env` still needs: `SCOUT_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5`, `SCOUT_POSTGRES_DSN` using `scout_app`, vector dimension 768.
 - First-person voice in docs and README ("I built..."). Plain, no AI-sounding prose. Avoid: delve, tapestry, seamless, pivotal, foster, leverage, "serves as/boasts", "it's not just X, it's Y", padded groups of three, decorative adjectives, emoji headings.
 - No `Co-Authored-By`, no "generated with" lines, no AI attribution in commits, PRs or docs.
 - Functionality first: fix and make it work before adding features.
@@ -43,7 +43,7 @@ Call `mcpvenv/bin/python` directly. The venv is gitignored. Recreate it with `py
 - **bge-base-en-v1.5 via fastembed (ONNX), not sentence-transformers.** About 1 point lower MTEB retrieval than bge-large, 5.7x smaller model, and no PyTorch (venv 1.2 GB to 463 MB).
 - **`mcp>=1.2,<2`.** 2.x removed the `@server.list_tools()` / `@server.call_tool()` decorators.
 - **`elasticsearch<9`.** The compose server is 8.14.
-- **Server connects to Postgres as `atlas_app`.** The compose superuser bypasses row-level security.
+- **Server connects to Postgres as `scout_app`.** The compose superuser bypasses row-level security.
 - **Tool errors return as `isError` results** with `{code, retryable, hint}` JSON, because the SDK flattens raised exceptions to text.
 - **Destructive tools stay pending until a human approves that exact call.** No approval endpoint exists yet, so they stay pending. That is deliberate and safe.
 - **Stateless MCP sessions.** Costs about 2.3 ms per call over the bare HTTP stack; lets any replica serve any request.
@@ -61,7 +61,7 @@ Call `mcpvenv/bin/python` directly. The venv is gitignored. Recreate it with `py
 
 ## Pointers
 
-- Request path: `src/atlas_mcp/server.py` `_run_pipeline`
+- Request path: `src/scout_mcp/server.py` `_run_pipeline`
 - Policy rules: `config/policy.yaml`, engine in `auth/policy.py`
 - Tool base and `authorize`: `tools/base.py`
 - Test harness: `tests/conftest.py` (`app_client` runs the real server with Redis, embeddings and token validation faked)
