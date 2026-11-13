@@ -4,6 +4,8 @@ Every store, what is in it, and how tenancy is enforced there. Seed data is in `
 
 ## Postgres
 
+Two databases on one server: `atlas` (this section) and `keycloak` (owned by its own `keycloak` role; `atlas_app` has no access to it).
+
 Tables: `customers`, `orders`, `documents`. All have `tenant_id TEXT NOT NULL`.
 
 | Table | Key columns |
@@ -18,6 +20,21 @@ Isolation:
 - Two roles. `atlas` (the compose superuser) creates the schema. `atlas_app` has `SELECT` on the three tables, `NOSUPERUSER NOBYPASSRLS`. The server must connect as `atlas_app`: superusers skip RLS entirely.
 - `postgres.query` runs in a read-only transaction and calls `set_config('app.tenant_id', $1, true)` first. The `true` makes it transaction-local.
 
+## Tokens (Keycloak)
+
+What the server reads from a verified access token:
+
+| Claim | Meaning |
+|-------|---------|
+| `sub` | The agent's identity, recorded as `caller` in the audit log |
+| `tenant` | The tenant every query is pinned to |
+| `roles` | Space-separated policy subjects, for example `role:support_copilot` |
+| `scope` | Space-separated tool scopes, for example `tool:postgres:read` |
+| `aud` | Must include `atlas-mcp` |
+| `act.sub` | Optional: the human who delegated to the agent, recorded as `delegator` |
+
+Realm clients: `copilot-acme`, `copilot-globex` (read scopes), `writer-acme` (`s3` read and write), `reviewer-acme` (`approval:review`). Their secrets in the realm file are for development.
+
 ## Elasticsearch
 
 | Index | Fields | Notes |
@@ -25,7 +42,7 @@ Isolation:
 | `tickets` | `customer_id`, `status`, `priority`, `subject`, `created_at`, `_tenant` | `status` is `open` or `pending` in the seed data |
 | `documents` | `title`, `body`, `_tenant` | mirror of the Postgres `documents` rows, `_id` is the document id |
 
-The tool wraps every query: `bool.must = [caller query]`, `bool.filter = [term _tenant]`.
+The tool wraps every query: `bool.must = [caller query]`, `bool.filter = [term _tenant]`. The cluster has security on: the server and the seed script authenticate as `elastic`.
 
 ## Qdrant
 
@@ -37,20 +54,22 @@ One collection, `support_docs`: cosine distance, 768 dimensions (bge-base-en-v1.
 | `tenant` | Pinned by a mandatory `must` clause on every search. |
 | `title`, `text` | For previews without a database round trip. |
 
-Changing the embedding model changes the dimension. Re-run the seed script and re-embed any real data, or searches return noise.
+Every request carries the `api-key` header. Changing the embedding model changes the dimension. Re-run the seed script and re-embed any real data, or searches return noise.
 
 ## Redis
+
+Password required. Memory capped at 256 MB with `volatile-lru`, no snapshots: every key has a TTL and losing them on restart fails safe.
 
 | Key | Holds | TTL |
 |-----|-------|-----|
 | `atlas:<tool>:<24 hex>` | cached tool result, hash of tool + tenant + arguments | per tool, L2 default 600 s |
 | `atlas:rl:<tenant>:<tool>` | token bucket: `tokens`, `last_ms` | 3600 s |
-| `atlas:approval:<id>` | pending approval: tenant, caller, delegator, tool, arguments, state, approver | 3600 s |
+| `atlas:approval:<id>` | pending approval: tenant, caller, delegator, tool, arguments, state, approver | 3600 s, deleted when used |
 | `<cache key>:lock` | stampede lock | 5 s |
 
-## S3 (MinIO in compose)
+## S3 (SeaweedFS in compose)
 
-Bucket `atlas-mcp-data`. Object key is `<tenant>/<key>`. A tenant cannot name another tenant's prefix because the server adds its own.
+Bucket `atlas-mcp-data`, created by the `s3-init` service. Object key is `<tenant>/<key>`. A tenant cannot name another tenant's prefix because the server adds its own.
 
 ## Audit log
 
@@ -64,5 +83,6 @@ Newline-delimited JSON at `ATLAS_AUDIT_LOG_PATH`, one line per tool call, also p
 | `atlas_tool_latency_seconds` | `tool` |
 | `atlas_cache_hits_total`, `atlas_cache_misses_total` | `tool` |
 | `atlas_rate_limited_total` | `tool` |
+| `atlas_circuit_state` | `tool` (0 closed, 1 half-open, 2 open) |
 
 No tenant or caller labels: they multiply the series count. Unregistered tool names are recorded as `unknown`.

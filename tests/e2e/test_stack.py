@@ -68,7 +68,7 @@ def test_oversized_request_bodies_are_refused(http):
     assert r.status_code == 413
 
 
-@pytest.mark.parametrize("port", [5432, 6379, 9200, 6333, 9000, 8080])
+@pytest.mark.parametrize("port", [5432, 6379, 9200, 6333, 8333, 9333, 8080])
 def test_stores_and_the_app_are_not_reachable_from_the_host(port):
     with socket.socket() as s:
         s.settimeout(2)

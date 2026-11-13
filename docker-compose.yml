@@ -9,7 +9,7 @@
 #   8443   Caddy, the TLS edge for /mcp and /approvals
 #   8081   Keycloak (token endpoint)
 #   3000   Grafana    9090  Prometheus    16686  Jaeger
-# Postgres, Redis, Elasticsearch, Qdrant and MinIO sit on an internal network with
+# Postgres, Redis, Elasticsearch, Qdrant and the S3 store sit on an internal network with
 # no route to the host. Reach them with `docker compose exec`.
 #
 # Every store requires credentials. The defaults below are for development only.
@@ -69,10 +69,10 @@ services:
       ATLAS_ELASTICSEARCH_PASSWORD: ${ATLAS_ELASTICSEARCH_PASSWORD:-atlas-dev-es}
       ATLAS_VECTOR_DB_URL: http://qdrant:6333
       ATLAS_VECTOR_DB_API_KEY: ${ATLAS_VECTOR_DB_API_KEY:-atlas-dev-qdrant}
-      ATLAS_S3_ENDPOINT: http://minio:9000
+      ATLAS_S3_ENDPOINT: http://s3:8333
       ATLAS_S3_BUCKET: atlas-mcp-data
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-atlasaccess}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-atlas-dev-s3-secret}
       AWS_DEFAULT_REGION: us-east-1
       ATLAS_EMBEDDING_MODEL: ${ATLAS_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
       ATLAS_RATE_LIMIT_DEFAULT_RPM: ${ATLAS_RATE_LIMIT_DEFAULT_RPM:-60}
@@ -86,7 +86,7 @@ services:
       redis: { condition: service_healthy }
       elasticsearch: { condition: service_healthy }
       qdrant: { condition: service_healthy }
-      minio-init: { condition: service_completed_successfully }
+      s3-init: { condition: service_completed_successfully }
       otel-collector: { condition: service_started }
     volumes:
       - atlas-logs:/var/log/atlas
@@ -258,37 +258,44 @@ services:
       timeout: 3s
       retries: 20
 
-  minio:
-    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+  # SeaweedFS with its S3 gateway. MinIO stopped publishing images, so this is the
+  # S3-compatible store; the tools talk plain S3 and do not care which one is behind it.
+  s3:
+    image: chrislusf/seaweedfs:3.85
     restart: unless-stopped
     networks: [ data ]
-    command: server /data --console-address ":9001"
+    entrypoint: [ "/bin/sh", "-c" ]
+    command:
+      - >-
+        printf '{"identities":[{"name":"atlas","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
+        "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json &&
+        exec weed server -dir=/data -s3 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=128
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    volumes: [ "miniodata:/data" ]
-    mem_limit: 256m
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-atlasaccess}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-atlas-dev-s3-secret}
+    volumes: [ "s3data:/data" ]
+    mem_limit: 512m
     healthcheck:
-      test: [ "CMD", "mc", "ready", "local" ]
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:9333/cluster/status" ]
       interval: 5s
       timeout: 3s
       retries: 20
 
   # One-shot: create the bucket the S3 tools write to.
-  minio-init:
+  s3-init:
     image: atlas-mcp:dev
     build: .
     networks: [ data ]
     entrypoint: [ "python", "/init/init_bucket.py" ]
     environment:
-      ATLAS_S3_ENDPOINT: http://minio:9000
+      ATLAS_S3_ENDPOINT: http://s3:8333
       ATLAS_S3_BUCKET: atlas-mcp-data
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-atlasaccess}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-atlas-dev-s3-secret}
       AWS_DEFAULT_REGION: us-east-1
-    volumes: [ "./deploy/minio:/init:ro" ]
+    volumes: [ "./deploy/s3:/init:ro" ]
     depends_on:
-      minio: { condition: service_healthy }
+      s3: { condition: service_healthy }
     restart: "no"
 
   # ── Observability ─────────────────────────────────────────────────────
@@ -351,6 +358,6 @@ volumes:
   pgdata: {}
   esdata: {}
   qdata: {}
-  miniodata: {}
+  s3data: {}
   atlas-logs: {}
   caddy-data: {}
