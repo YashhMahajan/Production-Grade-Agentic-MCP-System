@@ -34,16 +34,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
-# The base image ships older pip, setuptools and wheel, which carry advisories of their
-# own (wheel 0.45.1, and jaraco.context inside setuptools). Nothing here builds at runtime.
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
 # Non-root user — production servers never run as root.
 RUN useradd --system --uid 10001 --home /app scout
 WORKDIR /app
 
 COPY --from=builder /wheels /wheels
-RUN pip install --no-index --find-links=/wheels scout-mcp && rm -rf /wheels
+# The base image's pip, setuptools and wheel carry advisories of their own (wheel 0.45.1,
+# jaraco.context inside setuptools, an older setuptools), and nothing builds at runtime.
+# Install the app, then remove the build tooling and pip's bundled install wheels.
+RUN pip install --no-index --find-links=/wheels scout-mcp && rm -rf /wheels \
+    && pip uninstall -y setuptools wheel pip \
+    && rm -rf /usr/local/lib/python3.11/ensurepip/_bundled
 
 # Bake the embedding model into the image (about 210 MB as ONNX). The container then
 # starts without network access to Hugging Face, and replicas do not each download it.
