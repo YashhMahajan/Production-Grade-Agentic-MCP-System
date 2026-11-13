@@ -16,6 +16,7 @@ can route any request to any replica. Session-scoped data lives in Redis.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -238,6 +239,9 @@ class AtlasServer:
                 _CIRCUIT_GAUGE[breaker.state]
             )
 
+        # Backends return datetimes, UUIDs and Decimals, which the MCP SDK cannot encode.
+        # Normalise once here so the response and the cache hold the same plain JSON.
+        result = json.loads(json.dumps(result, default=str))
         if tool.cacheable:
             await self.cache.set(cache_key, result, ttl=tool.cache_ttl_seconds)
         if approval_id and self.approvals is not None:

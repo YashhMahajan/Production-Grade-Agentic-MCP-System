@@ -78,7 +78,10 @@ class TokenValidator:
             )
         except jwt.ExpiredSignatureError as exc:
             raise AuthError("token_expired", retryable=True, hint="refresh your token") from exc
-        except jwt.InvalidTokenError as exc:
+        except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
+            # PyJWKClientError is what PyJWT raises when the token's key id is not in the
+            # JWKS (a token from another issuer) or the JWKS cannot be fetched. It is not an
+            # InvalidTokenError, and left uncaught it surfaced as a 500.
             raise AuthError("invalid_token", retryable=False, hint=str(exc)) from exc
 
         # MCP-specific claims. The authorization server populates these during

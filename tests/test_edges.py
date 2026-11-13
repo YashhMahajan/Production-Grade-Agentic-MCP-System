@@ -113,3 +113,22 @@ def test_clients_send_credentials_to_elasticsearch_and_qdrant(monkeypatch):
     tool._es()
     assert seen["auth"] == ("elastic", "pw")
     es_mod.ElasticsearchSearchTool._client = None
+
+
+def test_a_token_whose_key_is_unknown_is_rejected_not_a_server_error():
+    # A token from another issuer has a key id this JWKS does not contain. PyJWT raises
+    # PyJWKClientError for that, which used to escape as an HTTP 500.
+    import jwt
+
+    from atlas_mcp.auth.oauth import TokenValidator
+    from atlas_mcp.config import ServerSettings
+    from atlas_mcp.errors.framework import AuthError
+
+    validator = TokenValidator(ServerSettings(_env_file=None))
+
+    def unknown_key(_token):
+        raise jwt.PyJWKClientError("Unable to find a signing key that matches: 'abc'")
+    validator._jwks.get_signing_key_from_jwt = unknown_key
+    with pytest.raises(AuthError) as exc:
+        validator.validate("any.token.here")
+    assert exc.value.code == "invalid_token"

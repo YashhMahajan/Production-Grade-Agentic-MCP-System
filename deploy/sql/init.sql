@@ -103,3 +103,10 @@ INSERT INTO documents (id, tenant_id, title, body, url) VALUES
 CREATE ROLE keycloak LOGIN PASSWORD 'keycloak'
     NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 CREATE DATABASE keycloak OWNER keycloak;
+
+-- Postgres lets every role connect to every database by default. Close that: each
+-- application role may connect to its own database only.
+REVOKE CONNECT ON DATABASE atlas FROM PUBLIC;
+GRANT CONNECT ON DATABASE atlas TO atlas_app;
+REVOKE CONNECT ON DATABASE keycloak FROM PUBLIC;
+GRANT CONNECT ON DATABASE keycloak TO keycloak;

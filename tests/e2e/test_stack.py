@@ -62,9 +62,11 @@ def test_edge_forwards_only_public_paths_and_sets_security_headers(http):
     assert len(doc["tools_summary"]) == 9
 
 
-def test_oversized_request_bodies_are_refused(http):
+async def test_oversized_request_bodies_are_refused(http):
+    # With a valid token, so the request reaches the point where the body is read.
+    bearer = await token("copilot-acme")
     r = http.post(f"{MCP_URL}/mcp", content=b"x" * (2 * 1024 * 1024),
-                  headers={"Content-Type": "application/json"})
+                  headers={"Content-Type": "application/json", "Authorization": f"Bearer {bearer}"})
     assert r.status_code == 413
 
 
@@ -84,7 +86,7 @@ def test_every_store_demands_credentials():
     assert qd.strip() in ("401", "403")
     redis = compose_exec("atlas-mcp", "python", "-c",
                          "import redis;redis.Redis(host='redis').ping()")
-    assert "Authentication required" in redis or "NOAUTH" in redis
+    assert "AuthenticationError" in redis  # redis-py words it "HELLO must be called with the client already authenticated"
     pg = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", "atlas_app", "-d", "atlas",
                       "-tAc", "select 1", env={"PGPASSWORD": "wrong"})
     assert "authentication failed" in pg
@@ -203,12 +205,15 @@ def test_row_level_security_hides_rows_from_the_app_role():
     assert psql("atlas", "atlas", count) == ["3"]
 
 
-def test_app_role_cannot_write_or_read_keycloak():
+def test_database_roles_are_confined_to_their_own_database():
     out = psql("atlas_app", "atlas_app", "INSERT INTO customers VALUES ('x','acme','n','e');")
-    assert "permission denied" in " ".join(out) or out == []
-    out = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", "atlas_app", "-d", "keycloak",
-                       "-tAc", "select 1", env={"PGPASSWORD": "atlas_app"})
-    assert "permission denied" in out or "denied" in out
+    assert "permission denied" in " ".join(out) or out == []        # SELECT-only role
+    into_keycloak = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", "atlas_app",
+                                 "-d", "keycloak", "-tAc", "select 1", env={"PGPASSWORD": "atlas_app"})
+    assert "permission denied for database" in into_keycloak
+    into_atlas = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", "keycloak",
+                              "-d", "atlas", "-tAc", "select 1", env={"PGPASSWORD": "keycloak"})
+    assert "permission denied for database" in into_atlas
 
 
 # ── Approval flow with S3 ─────────────────────────────────────────────────

@@ -249,3 +249,21 @@ async def test_each_call_gets_a_span_and_the_audit_line_carries_its_trace_id(
     assert bad_span.attributes["atlas.error_code"] == "tool_not_found"
     lines = [json.loads(x) for x in app_client.server.audit.path.read_text().splitlines()]
     assert lines[0]["trace_id"] == format(ok_span.context.trace_id, "032x")
+
+
+async def test_results_with_timestamps_uuids_and_decimals_are_encoded(app_client, monkeypatch):
+    # Postgres hands these back as Python objects; the MCP SDK cannot json.dumps them.
+    import datetime
+    import decimal
+    import uuid
+
+    async def run(self, tenant, args):
+        return {"columns": ["t", "u", "d"], "row_count": 1, "truncated": False, "rows": [{
+            "t": datetime.datetime(2026, 5, 12, 9, 14, tzinfo=datetime.timezone.utc),
+            "u": uuid.UUID("12345678-1234-5678-1234-567812345678"),
+            "d": decimal.Decimal("19.99")}]}
+    monkeypatch.setattr(PostgresQueryTool, "run", run)
+    is_error, payload = await call(app_client, "postgres.query", {"sql": "SELECT t FROM orders"})
+    assert not is_error
+    assert payload["rows"][0] == {"t": "2026-05-12 09:14:00+00:00",
+                                  "u": "12345678-1234-5678-1234-567812345678", "d": "19.99"}
