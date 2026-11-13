@@ -43,6 +43,25 @@ DOCUMENTS = [
      "body": "Gold customers get a first response within 2 hours."},
 ]
 
+# Exact-match fields must be `keyword`. With Elasticsearch's default dynamic mapping they
+# become analysed text: "CUST-1001" is split into tokens so a term query never matches it,
+# and a term filter on _tenant "acme" also matches a tenant called "acme-corp".
+MAPPINGS = {
+    "tickets": {"properties": {
+        "customer_id": {"type": "keyword"}, "status": {"type": "keyword"},
+        "priority": {"type": "keyword"}, "subject": {"type": "text"},
+        "created_at": {"type": "date"}, "_tenant": {"type": "keyword"}}},
+    "documents": {"properties": {
+        "title": {"type": "text"}, "body": {"type": "text"}, "_tenant": {"type": "keyword"}}},
+}
+
+# Searchable text from a tenant whose name starts with another tenant's name. It is in
+# Elasticsearch only; the end-to-end tests check that "acme" never sees it.
+LOOKALIKE_DOCS = [
+    {"id": "doc_acmecorp_refunds", "tenant": "acme-corp", "title": "Refund policy",
+     "body": "Refunds are issued within 5 business days of receiving the returned item."},
+]
+
 TICKETS = [
     {"id": "t_5001", "tenant": "acme", "customer_id": "CUST-1001", "status": "open",
      "priority": "high", "subject": "Refund for order o_9002 has not arrived",
@@ -62,9 +81,9 @@ def point_id(doc_id: str) -> str:
 
 def seed_elasticsearch() -> None:
     es = Elasticsearch(ES_URL, basic_auth=(ES_USER, ES_PASSWORD) if ES_PASSWORD else None)
-    for index, rows in (("tickets", TICKETS), ("documents", DOCUMENTS)):
+    for index, rows in (("tickets", TICKETS), ("documents", DOCUMENTS + LOOKALIKE_DOCS)):
         es.options(ignore_status=404).indices.delete(index=index)
-        es.indices.create(index=index)
+        es.indices.create(index=index, mappings=MAPPINGS[index])
         for row in rows:
             doc = {k: v for k, v in row.items() if k not in ("id", "tenant")}
             es.index(index=index, id=row["id"], document={**doc, "_tenant": row["tenant"]})

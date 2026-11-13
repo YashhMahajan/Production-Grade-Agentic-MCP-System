@@ -87,7 +87,9 @@ def test_every_store_demands_credentials():
     redis = compose_exec("atlas-mcp", "python", "-c",
                          "import redis;redis.Redis(host='redis').ping()")
     assert "AuthenticationError" in redis  # redis-py words it "HELLO must be called with the client already authenticated"
-    pg = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", "atlas_app", "-d", "atlas",
+    # Over the network address, as the app connects. The postgres image trusts 127.0.0.1
+    # inside its own container, so a localhost test would pass with any password.
+    pg = compose_exec("postgres", "psql", "-h", "postgres", "-U", "atlas_app", "-d", "atlas",
                       "-tAc", "select 1", env={"PGPASSWORD": "wrong"})
     assert "authentication failed" in pg
 
@@ -126,6 +128,18 @@ async def test_hybrid_search_fuses_elasticsearch_and_qdrant(acme):
     top = out["results"][0]
     assert top["id"] == "doc_refund_policy"
     assert top["lexical_rank"] == 1 and top["dense_rank"] == 1
+
+
+async def test_a_tenant_whose_name_starts_with_another_is_not_matched(acme):
+    # doc_acmecorp_refunds belongs to tenant "acme-corp" and says the same thing as acme's own
+    # refund policy. A term filter on an analysed field would have matched it for "acme".
+    out = value(await acme.call_tool("hybrid_search", {
+        "query": "refund business days", "es_index": "documents",
+        "vector_collection": "support_docs", "top_k": 10}))
+    assert "doc_acmecorp_refunds" not in {r["id"] for r in out["results"]}
+    hits = value(await acme.call_tool("elasticsearch.search", {
+        "index": "documents", "query": {"match": {"body": "refunds"}}, "size": 20}))
+    assert {h["id"] for h in hits["hits"]} == {"doc_refund_policy"}
 
 
 async def test_tenants_cannot_see_each_others_data(acme, globex):
@@ -189,7 +203,7 @@ async def test_cache_serves_repeats_and_metrics_show_it(acme):
 
 
 def psql(user: str, password: str, sql: str) -> list[str]:
-    out = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", user, "-d", "atlas",
+    out = compose_exec("postgres", "psql", "-h", "postgres", "-U", user, "-d", "atlas",
                        "-tA", "-f", "-", stdin=sql, env={"PGPASSWORD": password})
     return [line for line in out.splitlines() if line and not line.startswith(("BEGIN", "COMMIT"))]
 
@@ -208,10 +222,10 @@ def test_row_level_security_hides_rows_from_the_app_role():
 def test_database_roles_are_confined_to_their_own_database():
     out = psql("atlas_app", "atlas_app", "INSERT INTO customers VALUES ('x','acme','n','e');")
     assert "permission denied" in " ".join(out) or out == []        # SELECT-only role
-    into_keycloak = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", "atlas_app",
+    into_keycloak = compose_exec("postgres", "psql", "-h", "postgres", "-U", "atlas_app",
                                  "-d", "keycloak", "-tAc", "select 1", env={"PGPASSWORD": "atlas_app"})
     assert "permission denied for database" in into_keycloak
-    into_atlas = compose_exec("postgres", "psql", "-h", "127.0.0.1", "-U", "keycloak",
+    into_atlas = compose_exec("postgres", "psql", "-h", "postgres", "-U", "keycloak",
                               "-d", "atlas", "-tAc", "select 1", env={"PGPASSWORD": "keycloak"})
     assert "permission denied for database" in into_atlas
 

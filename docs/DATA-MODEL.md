@@ -39,8 +39,10 @@ Realm clients: `copilot-acme`, `copilot-globex` (read scopes), `writer-acme` (`s
 
 | Index | Fields | Notes |
 |-------|--------|-------|
-| `tickets` | `customer_id`, `status`, `priority`, `subject`, `created_at`, `_tenant` | `status` is `open` or `pending` in the seed data |
-| `documents` | `title`, `body`, `_tenant` | mirror of the Postgres `documents` rows, `_id` is the document id |
+| `tickets` | `customer_id` (keyword), `status` (keyword), `priority` (keyword), `subject` (text), `created_at` (date), `_tenant` (keyword) | `status` is `open` or `pending` in the seed data |
+| `documents` | `title` (text), `body` (text), `_tenant` (keyword) | mirror of the Postgres `documents` rows, `_id` is the document id |
+
+`_tenant`, `customer_id` and `status` must be mapped as `keyword`. With the default dynamic mapping they become analysed text, exact `term` queries stop matching, and a `term` filter on `_tenant: acme` also matches a tenant called `acme-corp`. `deploy/seed/seed.py` creates the indices with explicit mappings; do the same in any real index.
 
 The tool wraps every query: `bool.must = [caller query]`, `bool.filter = [term _tenant]`. The cluster has security on: the server and the seed script authenticate as `elastic`.
 
