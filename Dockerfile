@@ -27,9 +27,16 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
     SCOUT_TRANSPORT=http SCOUT_HTTP_HOST=0.0.0.0 SCOUT_HTTP_PORT=8080 \
     SCOUT_EMBEDDING_CACHE_DIR=/models
 
+# `upgrade` pulls Debian's security fixes that landed after the base image was built
+# (zlib1g had two HIGH advisories with fixes available).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates tini \
+    && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
+
+# The base image ships older pip, setuptools and wheel, which carry advisories of their
+# own (wheel 0.45.1, and jaraco.context inside setuptools). Nothing here builds at runtime.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Non-root user — production servers never run as root.
 RUN useradd --system --uid 10001 --home /app scout

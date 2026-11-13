@@ -123,7 +123,7 @@ jobs:
         run: |
           docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}" | tee docker-stats.txt
           { echo '### Memory and CPU per container'; echo; echo '```'; cat docker-stats.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          docker images scout-mcp:dev --format "Image scout-mcp:dev is {{.Size}}" | tee -a docker-stats.txt >> "$GITHUB_STEP_SUMMARY"
+          docker images scout-mcp:dev --format "Image scout-mcp:dev is {{.Size}}" | tee -a docker-stats.txt | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Logs on failure
         if: failure()
@@ -170,10 +170,10 @@ jobs:
         run: docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.76.2 config --severity HIGH,CRITICAL --exit-code 1 /src
       - name: Build the image
         run: docker build -t scout-mcp:scan .
-      - name: Image vulnerabilities (fail on fixable CRITICAL)
+      - name: Image vulnerabilities (fail on any HIGH or CRITICAL that has a fix)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
-            image --severity CRITICAL --ignore-unfixed --exit-code 1 scout-mcp:scan
+            image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 scout-mcp:scan
       - name: Image vulnerability counts (informational)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
