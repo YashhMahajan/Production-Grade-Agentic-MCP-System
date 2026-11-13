@@ -170,6 +170,19 @@ jobs:
         run: docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.76.2 config --severity HIGH,CRITICAL --exit-code 1 /src
       - name: Build the image
         run: docker build -t scout-mcp:scan .
+      - name: Where the fixable findings live
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
+            image --severity HIGH,CRITICAL --ignore-unfixed --format json scout-mcp:scan > trivy.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open("trivy.json"))
+          rows = [(r["Target"], v["PkgName"], v["InstalledVersion"], v.get("FixedVersion", ""), v.get("PkgPath", ""))
+                  for r in d.get("Results", []) for v in (r.get("Vulnerabilities") or [])]
+          print(f"{len(rows)} fixable HIGH/CRITICAL finding(s)")
+          for row in rows:
+              print(" | ".join(row))
+          PY
       - name: Image vulnerabilities (fail on any HIGH or CRITICAL that has a fix)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
