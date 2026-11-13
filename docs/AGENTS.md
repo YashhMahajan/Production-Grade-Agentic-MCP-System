@@ -4,37 +4,62 @@ Rules for any AI assistant or script working in this repo, then the limits the c
 
 ## Hard guardrails
 
-1. **Do not start Docker, Compose, or any container, VM, or large download on the developer's machine.** Compose files and the Dockerfile are checked statically (YAML parses, `ruff`). Real stack runs happen in CI.
-2. **Do not read, print, edit, or commit `.env`.** It holds real keys. Change `.env.example` and tell the owner which lines to update.
+1. **Do not start Docker, Compose, or any container, VM, or large download on the developer's machine.** Check compose files and Dockerfiles statically (YAML parses, `ruff`, `docker compose config` in CI). Anything that needs a running container runs in GitHub Actions: push a branch and read the run.
+2. **Never print or commit values from `.env`.** It is gitignored and holds real keys. You may edit it when the owner asks. Mirror every new variable in `.env.example` with a safe development value.
 3. **Do not weaken isolation or deny-by-default.** Never remove a tenant filter, widen `atlas_app`'s grants, let the server connect as a superuser, set `ATLAS_POLICY_DEFAULT_DENY=false`, or add a policy rule without a test that shows who it allows.
-4. **A new tool needs four things:** a Pydantic input schema, `scopes_required`, a rule in `config/policy.yaml`, and a test in `tests/`. A write tool also sets `destructive=True`.
-5. **Do not invent numbers.** A figure in the docs comes from `scripts/` output you ran, or a linked source. If you have not measured it, say so.
-6. **No AI attribution anywhere.** No `Co-Authored-By`, no "generated with" line, in commits, PRs, docs, or comments.
-7. **Do not push, tag, release, or delete branches unless asked.**
+4. **Keep the data stores private and authenticated.** Postgres, Redis, Elasticsearch, Qdrant and the S3 store stay on the internal `data` network with no published ports, and each keeps its password or key. Do not publish a port on anything except `127.0.0.1`.
+5. **Give each service only the secrets it uses.** `atlas-mcp` lists its settings under `environment:`; do not give it `env_file: .env`, which would put the LLM keys in the server container.
+6. **A new tool needs four things:** a Pydantic input schema, `scopes_required`, a rule in `config/policy.yaml`, and a test in `tests/`. A write tool also sets `destructive=True`.
+7. **Do not invent numbers.** A figure in the docs comes from a script in `scripts/` or a CI run you can link, or from a linked source. If it has not been measured, say so.
+8. **No AI attribution anywhere.** No `Co-Authored-By`, no "generated with" line, in commits, PRs, docs, or comments.
+9. **Do not push to `main`, tag, release, or delete branches unless asked.** Work on a branch.
+10. **Docs are six files:** ARCHITECTURE, ISSUES, PRD, AGENTS, PERFORMANCE, DATA-MODEL. New knowledge goes into one of them or into `MEMORY.md`. Do not add other markdown files.
 
 ## Working rules
 
 - Make the smallest change that does the job. Every changed line should trace to the request. Do not reformat or "improve" neighbouring code.
 - Reproduce a bug with a failing test, then fix it, then show the test passing.
 - Match the existing style. Docs are first person ("I chose..."), plain, and give the reason for each choice.
-- Pin dependencies that have broken us (`mcp<2`, `elasticsearch<9`). Check a new major version before allowing it.
-- Say what was verified and how. "Parsed" is not "ran". "Passes against a fake" is not "works against Postgres".
+- Pin dependencies and images that have broken us: `mcp<2`, `elasticsearch<9`, and every image tag. Check that a tag exists before using it (MinIO's disappeared from both Docker Hub and Quay).
+- Say what was verified and how. "Parsed" is not "ran". "Passes against a fake" is not "works against Postgres". A green CI run is the evidence for anything in compose.
 
 ## Commands
 
-The virtualenv is `mcpvenv/`. Call its interpreter directly; do not rely on activation.
+The virtualenv is `mcpvenv/`. Call its interpreter directly.
 
 ```bash
 python3.11 -m venv mcpvenv
-mcpvenv/bin/python -m pip install -e ".[dev]"
+mcpvenv/bin/python -m pip install -e ".[dev]"   # reinstall after changing the version, or test_edges fails
 
-mcpvenv/bin/python -m pytest -q                    # all tests, no Docker, about 3 s
+mcpvenv/bin/python -m pytest -q                              # unit and in-process tests, about 4 s
 mcpvenv/bin/python -m ruff check src tests deploy scripts
-mcpvenv/bin/python scripts/bench_pipeline.py 1000  # request overhead
+mcpvenv/bin/python scripts/bench_pipeline.py 1000            # request overhead, backend faked
+```
 
+Needing a running stack (CI does this; you do not run it locally):
+
+```bash
+cp .env.example .env
+docker compose up -d --build --wait
+docker compose --profile seed run --rm seed
+ATLAS_E2E=1 pytest tests/e2e -v
+python scripts/bench_stack.py 200 10
 ```
 
 `pyproject.toml` pins ruff to `E4, E7, E9, F`. Do not run `ruff --fix` with other rules selected; it rewrites unrelated files.
+
+## CI
+
+`.github/workflows/ci.yml`, four jobs on every push to `main` and `ship-ready` and on pull requests:
+
+| Job | What it proves |
+|-----|----------------|
+| `test` | Lint, 74 tests, request-overhead benchmark |
+| `validate-deploy` | Compose resolves, Prometheus rules parse and pass their unit tests, Caddyfile validates, realm and dashboard are valid JSON, Dockerfile lint |
+| `stack` | Image builds, every service gets healthy, demo data loads, the end-to-end tests pass, then the real-backend benchmark and a memory snapshot |
+| `security` | `pip-audit` on dependencies, Trivy on the Dockerfile and the built image |
+
+To see why a run failed without waiting for the artifact: `gh run view <id> --log-failed`, or the job log through `gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`.
 
 ## Commit messages
 
@@ -53,5 +78,6 @@ Load policy.yaml at startup and fail if it is missing
 | Critic revisions | 1 | `agents/orchestrator.py` |
 | Customer id | must look like `CUST-1001`, else the copilot asks for one | `agents/planner.py` |
 | Writes | none; the allow-list has no write tool, and the server also enforces policy | both |
+| LLM providers | one, unless `ATLAS_LLM_FALLBACK=true` | `agents/base.py` |
 
 The server's policy applies to the copilot like any client. The client-side allow-list is a second layer, not the only one.

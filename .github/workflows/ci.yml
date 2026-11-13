@@ -155,6 +155,9 @@ jobs:
         with: { python-version: "3.11" }
       - name: Known vulnerabilities in Python dependencies
         run: |
+          # setuptools 79 on the runner has three known advisories; it is a build tool,
+          # not one of our dependencies, but audit a clean environment.
+          pip install -U pip setuptools
           pip install -e . pip-audit
           pip-audit --skip-editable
       - name: Dockerfile misconfiguration

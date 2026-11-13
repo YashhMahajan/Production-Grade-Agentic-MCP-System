@@ -276,7 +276,8 @@ services:
     volumes: [ "s3data:/data" ]
     mem_limit: 512m
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q --spider http://localhost:9333/cluster/status" ]
+      # The master binds to the container's own address, not localhost.
+      test: [ "CMD-SHELL", "wget -q --spider http://$$(hostname -i):9333/cluster/status" ]
       interval: 5s
       timeout: 3s
       retries: 20
