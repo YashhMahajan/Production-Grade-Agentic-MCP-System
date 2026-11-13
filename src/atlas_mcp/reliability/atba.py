@@ -19,7 +19,6 @@ import contextvars
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import ContextManager
 
 
 @dataclass

@@ -18,11 +18,11 @@ with Model Context Protocol* (arXiv, March 2026).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
-from mcp.types import ErrorData
-
+from mcp.types import CallToolResult, ErrorData, TextContent
 
 # ── Error taxonomy ────────────────────────────────────────────────────────
 # A flat, fixed set of codes. Do not introduce new codes casually — each one
@@ -134,6 +134,19 @@ def to_mcp_error(exc: ToolError) -> ErrorData:
         message=f"{exc.code}: {exc.hint or ''}",
         data=exc.to_dict(),
     )
+
+def to_call_tool_result(exc: ToolError) -> CallToolResult:
+    """Tool failures travel as ``isError`` results, not JSON-RPC errors.
+
+    The MCP SDK turns any exception raised in a tool handler into plain text, which
+    would drop code/retryable/hint. Returning the result ourselves keeps the SERF
+    payload as JSON in the text block, where AtlasMCPClient reads it back.
+    """
+    return CallToolResult(
+        isError=True,
+        content=[TextContent(type="text", text=json.dumps(exc.to_dict(), default=str))],
+    )
+
 
 # 1. MCP uses JSON-RPC under the hood, and JSON-RPC errors have a code, message, and optional data field.
 # 2. We shove our full SERF dictionary into data. Hosts that understand Atlas can parse the data.retryable and data.hint fields and make smart decisions.

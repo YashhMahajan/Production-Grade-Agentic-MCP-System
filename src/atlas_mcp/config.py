@@ -9,7 +9,6 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +23,8 @@ class ServerSettings(BaseSettings):
     http_port: int = 8080
     # stateless_mode matters for horizontal scaling — see the 2026 MCP roadmap.
     stateless_mode: bool = True
+    # Tenant used when there is no token to read one from (stdio transport only).
+    tenant: str = "default"
 
     # ── Component 2: Authentication ─────────────────────────────────────────
     auth_issuer: str = "https://auth.atlas.local"
@@ -77,6 +78,12 @@ class ServerSettings(BaseSettings):
     s3_endpoint: str | None = None
     s3_bucket: str = "atlas-mcp-data"
     vector_db_url: str = "http://localhost:6333"  # Qdrant default
+
+    # ── Embeddings ──────────────────────────────────────────────────────────
+    # bge-base: 109M params / 768 dims. bge-large scores ~1 point higher on MTEB
+    # retrieval (54.29 vs 53.25) for 3x the parameters and ~2.5x the latency.
+    embedding_model: str = "BAAI/bge-base-en-v1.5"
+    embedding_cache_dir: str | None = None
 
 
 @lru_cache(maxsize=1)

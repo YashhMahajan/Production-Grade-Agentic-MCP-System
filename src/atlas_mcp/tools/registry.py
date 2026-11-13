@@ -14,19 +14,20 @@ registry scanning for public tools will see only what policy allows it to see.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from mcp.types import Tool as MCPToolSpec
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from atlas_mcp.errors.framework import ToolNotFoundError
-from atlas_mcp.tools.base import Tool, ToolLevel, ToolMetadata
+from atlas_mcp.tools.base import Tool
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, issuer: str = "https://auth.atlas.local") -> None:
         self._tools: dict[str, Tool] = {}
+        self.issuer = issuer
 
     # ── Registration / discovery ──────────────────────────────────────────
     def register(self, tool: Tool) -> None:
@@ -55,6 +56,8 @@ class ToolRegistry:
         from atlas_mcp.tools.workflow.customer_context import CustomerContextTool
 
         if policy is None:
+            # No rules and default-allow. Only for tests; the server always passes
+            # the engine loaded from policy.yaml.
             policy = PolicyEngine(rules=[], default_deny=False)
 
         # Atomic (Level 1)
@@ -76,6 +79,9 @@ class ToolRegistry:
             return self._tools[name]
         except KeyError:
             raise ToolNotFoundError(name) from None
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._tools
 
     def __len__(self) -> int:
         return len(self._tools)
@@ -112,7 +118,7 @@ class ToolRegistry:
         return JSONResponse(
             {
                 "protocol_version": "2025-11",
-                "server": {"name": "atlas-mcp", "version": "0.1.0"},
+                "server": {"name": "atlas-mcp", "version": "0.2.0"},
                 "capabilities": {
                     "tools": {"list_changed": True},
                     "prompts": {},
@@ -128,9 +134,9 @@ class ToolRegistry:
                     for t in self._tools.values()
                 ],
                 "authorization_server": {
-                    "issuer": "https://auth.atlas.local",
+                    "issuer": self.issuer,
                     "metadata_url": (
-                        "https://auth.atlas.local/.well-known/oauth-authorization-server"
+                        f"{self.issuer.rstrip('/')}/.well-known/oauth-authorization-server"
                     ),
                 },
             }

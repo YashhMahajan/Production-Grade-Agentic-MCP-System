@@ -1,219 +1,67 @@
 # Architecture
 
-### Architecture file 
+I built Atlas MCP as one MCP server that sits between AI agents and a company's data stores, plus a four-agent support copilot that uses it. This page describes what the code does today. Where something exists as a module but is not on the request path, I say so.
 
-Atlas-MCP is organised as **twelve components** that sit in a layered
-request pipeline. This document walks through the request path end to end,
-then unpacks each layer.
+## Request path
 
-## The request path
+One tool call over HTTP goes through these steps, in this order. Each step is a function you can open: the file is in the right column.
 
-A tool call enters the server via Streamable HTTP (or stdio for local),
-traverses the middleware stack, and lands in the dispatch function in
-`server.py`. Every step below is enforced in code; nothing is optional:
+| # | Step | What it does | File |
+|---|------|--------------|------|
+| 1 | Auth middleware | Verifies the bearer JWT against the issuer's JWKS. Public paths skip it. | `auth/middleware.py`, `auth/oauth.py` |
+| 2 | Tenant middleware | Takes the tenant from the token. An `X-Tenant-Id` header that differs is a 403 unless the token has `tenant:*:impersonate`. | `governance/tenant.py` |
+| 3 | MCP session manager | Stateless Streamable HTTP, mounted at `/mcp`. | `server.py` |
+| 4 | Context | Reads the principal and tenant the middleware stored on `request.state`. | `server.py` `_current_context` |
+| 5 | Validate | The tool's Pydantic schema. Failures return one line: `field: reason`. | `tools/base.py` |
+| 6 | Authorize | Token scopes first, then `config/policy.yaml` for the caller and each of its roles. | `tools/base.py`, `auth/policy.py` |
+| 7 | Rate limit | Redis token bucket keyed on tenant and tool. | `ratelimit/limiter.py` |
+| 8 | Approval | Destructive tools stop here until a human approves this exact call. | `governance/approval.py` |
+| 9 | Cache | L1 in process, L2 in Redis. The key includes the tenant. | `cache/manager.py` |
+| 10 | Execute | Circuit breaker, around retry, around the tool. | `reliability/` |
+| 11 | Record | One OTel span, one audit line, Prometheus counters. | `observability/` |
 
-```
-  HTTP request
-       │
-       ▼
-  [1] Transport layer           ← server.py  (Streamable HTTP / stdio)
-       │
-       ▼
-  [11] Tracing middleware       ← observability/tracing.py  (OTel span begins)
-       │
-       ▼
-  [2] Auth middleware           ← auth/middleware.py       (validates JWT)
-       │
-       ▼
-  [12] Tenant middleware        ← governance/tenant.py     (extracts tenant)
-       │
-       ▼
-  MCP call_tool handler         ← server.py
-       │
-       ▼
-  [5] Input validation          ← tools/base.py            (Pydantic schema)
-       │
-       ▼
-  [3] Policy engine             ← auth/policy.py           (deny-by-default)
-       │
-       ▼
-  [8] Rate limiter              ← ratelimit/limiter.py     (Redis token bucket)
-       │
-       ▼
-  [9] Cache read                ← cache/manager.py         (L1 → L2 → miss)
-       │                                    (hit) ──► return cached result
-       ▼ (miss)
-  [7] Circuit breaker           ← reliability/circuit_breaker.py
-       │
-       ▼
-  [6] Tool execution            ← tools/{atomic,composed,workflow}/
-       │
-       ▼
-  [10] Error normalisation      ← errors/framework.py      (SERF → MCP wire)
-       │
-       ▼
-  [11] Audit log + metrics      ← observability/{audit,metrics}.py
-       │
-       ▼
-  MCP response
-```
+Errors at any step are `ToolError` subclasses with `code`, `retryable` and `hint`. They go back as an MCP result with `isError: true` and that payload as JSON, so an agent can decide whether to retry. Anything that is not a `ToolError` becomes `internal_error` with no detail.
 
-The ordering is not negotiable:
+Public paths (no token): `/healthz`, `/readyz`, `/metrics`, `/.well-known/mcp-server`. I made `/metrics` public because Prometheus does not send tokens. Do not expose it outside your cluster.
 
-- **Tracing first** because every other layer should be able to add span
-  attributes describing its decision.
-- **Auth before tenancy** because tenancy is derived from the Principal.
-- **Validation before policy** because a malformed payload is rejected before
-  we waste a policy evaluation on it.
-- **Policy before rate limit** because a denied call should not consume quota.
-- **Rate limit before cache** because a cache hit for a banned caller is
-  still a leak.
-- **Cache before circuit breaker** because a warm cache can serve during a
-  downstream outage.
+## Tools
 
-## Components in depth
+Three levels. Agents are better off calling one composed tool than assembling three atomic ones.
 
-### 1. Transport & Session Layer — `server.py`
+| Level | Tool | Needs scopes | Cache |
+|-------|------|--------------|-------|
+| Atomic | `postgres.query` | `tool:postgres:read` | 30 s |
+| Atomic | `elasticsearch.search` | `tool:elasticsearch:read` | 30 s |
+| Atomic | `vector.search` | `tool:vector:read` | 300 s |
+| Atomic | `s3.get_object` | `tool:s3:read` | 300 s |
+| Atomic | `s3.put_object` (destructive) | `tool:s3:write` | none |
+| Atomic | `http.fetch` | `tool:http:fetch` | none |
+| Composed | `semantic_search` | vector + postgres read | 120 s |
+| Composed | `hybrid_search` | vector + elasticsearch read | 120 s |
+| Workflow | `customer.build_context` | postgres + elasticsearch + vector read | 30 s |
 
-Two transports supported from day one: stdio for local hosts (Claude Desktop,
-Cursor) and Streamable HTTP for remote deployments. The Streamable HTTP
-session manager is configured in **stateless mode** so that any replica can
-handle any request — the 2026 MCP roadmap's top production fix. Session data
-(if any) lives in Redis.
+## Tenant isolation, layer by layer
 
-### 2. Authentication — `auth/oauth.py`
+A tenant id is set once, from the token, and every backend enforces it on its own:
 
-Atlas is a **resource server**, not an authorization server. It only
-validates JWTs against a JWKS endpoint. The authorization server (WorkOS
-AuthKit, Auth0, Descope, or your own) handles login, consent, client
-registration, and token issuance. This separation is load-bearing: if the
-MCP server issues its own tokens you end up reinventing identity.
+- Postgres: row-level security on `app.tenant_id`, which the tool sets inside a read-only transaction. The app connects as `atlas_app`, which cannot bypass RLS.
+- Elasticsearch: a mandatory `_tenant` term filter wrapped around the caller's query.
+- Qdrant: a mandatory `tenant` match under the caller's filter.
+- S3: every key is prefixed with the tenant.
+- Cache: the tenant is part of the key.
 
-Three MCP-specific claims we expect on the token:
+## Agents
 
-- `tenant` — multi-tenancy scope.
-- `act.sub` (RFC 8693 actor claim) — the human who authorised the agent.
-- `scope` — space-separated list like `tool:postgres:read tool:vector:read`.
+Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orchestrator.py`. The retriever may call six read-only tools, at most 6 iterations. The critic can send the draft back once. The agents talk to the server through `AtlasMCPClient`, so the server's policy applies to them like any other client.
 
-### 3. Authorization — `auth/policy.py`
+## Decisions
 
-YAML-driven rules with a narrow DSL (`sql_contains_any`, `pii_fields`).
-Deny-by-default. Deny rules beat allow rules. Resources are globbed with a
-`tenant:<id>/<path>` convention so every rule carries tenancy in its match.
+- **Stateless sessions.** Any replica can serve any request. The cost is that the MCP session is rebuilt per request, which is most of the 2.7 ms in [PERFORMANCE.md](PERFORMANCE.md).
+- **Atlas is a resource server only.** It validates tokens and never issues them.
+- **Read and write are separate tools.** A prompt-injected agent with a SQL tool can drop a table. With read-only tools it gets a policy error.
+- **bge-base over bge-large.** About 1 point lower on MTEB retrieval, 3x fewer parameters, 5.7x smaller on disk. Numbers and sources are in PERFORMANCE.md.
+- **`mcp` is pinned below 2.** Version 2 removed the decorator API the server uses.
 
-The engine is boring on purpose. A policy DSL that can express anything is
-one that nobody understands six months later.
+## Not on the request path yet
 
-### 4. Tool Registry & Discovery — `tools/registry.py`
-
-- In-memory index for `list_tools` / `call_tool`.
-- Visibility filter: a caller never sees a tool whose required scopes they
-  do not hold. Cleaner context window ⇒ better tool choice by the LLM.
-- `/.well-known/mcp-server` endpoint publishes capability metadata without
-  requiring a live session — part of the 2026 MCP roadmap.
-
-### 5. Input Validation — `tools/base.py` + per-tool schemas
-
-Every tool declares a Pydantic model. `SELECT`-only guards in Postgres
-tool, HTTPS-only in the HTTP tool, enum constraints on methods, regex on
-customer ids. Agent input is the default threat model. Raise
-`ValidationError` with a one-line hint the agent can actually learn from.
-
-### 6. Tool Execution Engine — three-level hierarchy
-
-| Level | Example | Purpose |
-|-------|---------|---------|
-| **Atomic** | `postgres.query` | One primitive, one backend |
-| **Composed** | `semantic_search`, `hybrid_search` | Small deterministic chains |
-| **Workflow** | `customer.build_context` | Multi-step procedure behind one name |
-
-Giving agents a higher-level option measurably reduces erroneous calls
-(~40% in the April 2026 production case study with 87 tools). The atomic
-layer stays available for edge cases.
-
-### 7. Reliability — `reliability/`
-
-- **Circuit breaker** — per-tool, closed / half-open / open, counts only
-  retryable upstream errors. Stops the cascade when one backend dies.
-- **Retry** — exponential backoff with full jitter, honours
-  `ToolError.retryable`, respects the ATBA deadline so it never retries
-  past budget.
-- **ATBA (Adaptive Timeout Budget Allocation)** — one total budget per
-  agent turn, divided across tool calls by observed p95. Guarantees bounded
-  end-to-end latency even when an agent chains many calls.
-
-### 8. Rate Limiting — `ratelimit/limiter.py`
-
-Redis token bucket driven by a Lua script so check-and-consume is atomic.
-Keyed on `(tenant, tool)`. Per-tool overrides let you give expensive
-workflow tools tighter limits than atomic reads. An agent burst that would
-exhaust quota gets a `RateLimitError` with a `retry_after_seconds` hint.
-
-### 9. Caching — `cache/manager.py`
-
-Two tiers (L1 in-process LRU, L2 shared Redis), write-through. Stampede
-prevention via a short Redis NX lock so a thundering herd of agents on the
-same cold key triggers exactly one compute. Keys are deterministic hashes
-of `(tool, tenant, args)` so tenants cannot collide.
-
-### 10. Structured Error Framework — `errors/framework.py`
-
-Every surfaced error is a `ToolError` subclass with `code`, `retryable`,
-`hint`, `context`. Converted to MCP's on-the-wire `ErrorData` so hosts that
-understand Atlas can parse the hint and hosts that do not still get a
-readable message. A Python traceback teaches an agent nothing; a SERF
-payload tells it whether to retry and what to try differently.
-
-### 11. Observability — `observability/`
-
-- **Tracing (OTel)** — one span per tool call with tool, tenant, cache
-  outcome, circuit state. Exported via OTLP to an OTel collector that fans
-  out to Jaeger / Datadog / your SIEM.
-- **Metrics (Prometheus)** — counters and latency histograms labelled by
-  tool (not tenant — that is a cardinality bomb). Grafana reads from
-  `/metrics`.
-- **Audit log** — newline-delimited JSON, one line per call, `args_hash`
-  (never raw args — PII risk), trace id, tenant, caller, delegator. Your
-  SIEM owns durability.
-
-### 12. Governance & Multi-Tenancy — `governance/`
-
-- **Tenant middleware** — attaches the Principal's tenant to
-  `request.state`. Optional header-based impersonation gated by a scope
-  that only internal admins hold.
-- **Approval gate** — destructive tools do not execute immediately. They
-  create a Redis-backed pending approval and return `PendingApprovalError`.
-  A human reviews and approves via a separate dashboard. This is what lets
-  you ship write-capable agents without betting the company.
-- **Row-level security** — Postgres RLS policies pinned to
-  `current_setting('app.tenant_id')`. Even if a policy bug lets an agent
-  run an unfiltered query, the database physically cannot return another
-  tenant's rows.
-
-## The agent layer
-
-`src/atlas_mcp/agents/` is where Atlas becomes a product. The support
-copilot is a deliberately simple four-agent orchestration:
-
-```
-  user question
-       │
-       ▼
-  [Planner]   — emits a retrieval plan JSON
-       │
-       ▼
-  [Retriever] — tool-calling loop via AtlasMCPClient (read-only tools only)
-       │
-       ▼
-  [Synthesizer] — drafts a reply with [S1]-style citations
-       │
-       ▼
-  [Critic]    — approves or sends back to Synthesizer once
-       │
-       ▼
-  response (approved | needs human review)
-```
-
-Bounded loops, explicit roles, one `AgentRun` object that carries token
-counts and tool calls across all four agents. Everything debuggable; nothing
-magical.
+These modules exist and are tested in isolation but nothing calls them: `reliability/atba.py` (timeout budgets), `agents/memory.py`, and the `circuit_state` and `active_sessions` gauges. See [ISSUES.md](ISSUES.md).

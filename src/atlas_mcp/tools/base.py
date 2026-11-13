@@ -23,14 +23,15 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pydantic import BaseModel
 
 from atlas_mcp.auth.policy import PolicyEngine
-from atlas_mcp.errors.framework import ValidationError
+from atlas_mcp.errors.framework import PolicyError, ValidationError
 
 
 class ToolLevel(str, Enum):
@@ -77,6 +78,32 @@ class Tool(ABC):
                 hint=_summarise_pydantic_error(exc),
                 context={"tool": self.meta.name},
             ) from exc
+
+    # What the policy engine sees for this call. Tools override these to expose
+    # the resource they touch (an S3 key, a table) and any fields conditions read.
+    def policy_resource(self, args: BaseModel) -> str:
+        return "*"
+
+    def policy_context(self, args: BaseModel) -> dict:
+        return {}
+
+    def authorize(
+        self, *, subjects: Iterable[str], scopes: Iterable[str], tenant: str, args: BaseModel
+    ) -> None:
+        """Token scopes first, then the YAML policy, once per scope this tool needs.
+
+        ``list_tools`` hides tools the caller cannot use, but a caller can still
+        name a hidden tool, so both checks run again here on every call.
+        """
+        scope_set = set(scopes)
+        resource = self.policy_resource(args)
+        context = self.policy_context(args)
+        for action in self.meta.scopes_required:
+            if action not in scope_set and "tool:*:admin" not in scope_set:
+                raise PolicyError(
+                    "missing_scope", retryable=False, hint=f"token lacks scope {action}"
+                )
+            self.policy.check(tuple(subjects), tenant, action, resource, context)
 
     # produces a deterministic SHA-256 hash of (tool, tenant, args).
     # This is what the cache layer uses, and it includes the tenant so caches never cross tenant boundaries. Even if two tenants run the exact same query, they get different cache keys.

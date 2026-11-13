@@ -177,8 +177,7 @@ def _parse_json_lenient(text: str) -> dict:
     # Strip markdown fences if present.
     if text.startswith("```"):
         text = text.split("```", 2)[1]
-        if text.startswith("json\n"):
-            text = text[5:]
+        text = text.removeprefix("json\n")
     # Find the first { and the matching last }.
     start = text.find("{")
     end = text.rfind("}")

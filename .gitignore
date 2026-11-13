@@ -14,3 +14,5 @@ build/
 *.jsonl
 .DS_Store
 docs/STARTUP.md
+.claude/
+.ruff_cache/

@@ -16,13 +16,12 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from redis.asyncio import Redis
 
 from atlas_mcp.errors.framework import PolicyError, ToolError
-
 
 APPROVAL_TTL_SECONDS = 3600  # An unreviewed approval expires in one hour.
 
@@ -37,6 +36,7 @@ class PendingApproval:
     arguments: dict[str, Any]
     created_at: str
     state: Literal["pending", "approved", "denied", "expired"] = "pending"
+    approver: str | None = None
 
 
 class PendingApprovalError(ToolError):
@@ -78,7 +78,7 @@ class ApprovalGate:
             delegator=delegator,
             tool=tool,
             arguments=arguments,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         key = self._key(approval.id)
         await self._redis.set(key, json.dumps(asdict(approval)), ex=APPROVAL_TTL_SECONDS)
@@ -118,6 +118,10 @@ class ApprovalGate:
         await self._save(approval, add_approver=approver)
         return approval
 
+    async def consume(self, approval_id: str) -> None:
+        """Delete an approval once its call has run, so it cannot be replayed."""
+        await self._redis.delete(self._key(approval_id))
+
     # ── internals ─────────────────────────────────────────────────────────
     async def _load(self, approval_id: str) -> PendingApproval:
         raw = await self._redis.get(self._key(approval_id))
@@ -126,9 +130,9 @@ class ApprovalGate:
         return PendingApproval(**json.loads(raw))
 
     async def _save(self, approval: PendingApproval, add_approver: str | None = None) -> None:
-        payload = asdict(approval)
         if add_approver:
-            payload["approver"] = add_approver
+            approval.approver = add_approver
+        payload = asdict(approval)
         await self._redis.set(self._key(approval.id), json.dumps(payload), ex=APPROVAL_TTL_SECONDS)
 
     @staticmethod

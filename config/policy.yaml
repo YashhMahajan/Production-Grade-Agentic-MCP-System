@@ -37,7 +37,7 @@ rules:
     actions: ["tool:postgres:read", "tool:postgres:write"]
     resources: ["*"]
     conditions:
-    sql_contains_any: ["DROP", "TRUNCATE", "GRANT", "REVOKE"] # Rejects queries containing banned keywords
+      sql_contains_any: ["DROP", "TRUNCATE", "GRANT", "REVOKE"] # Rejects queries containing banned keywords
     effect: deny
 
   - id: no-pii-columns-for-support-agents
@@ -45,7 +45,7 @@ rules:
     actions: ["tool:postgres:read"]
     resources: ["*"]
     conditions:
-    pii_fields: ["ssn", "tax_id", "dob", "credit_card_number"] #Rejects queries requesting sensitive columns.
+      pii_fields: ["ssn", "tax_id", "dob", "credit_card_number"] #Rejects queries requesting sensitive columns.
     effect: deny
 
   # ── Tenant impersonation: internal tooling only ────────────────────────

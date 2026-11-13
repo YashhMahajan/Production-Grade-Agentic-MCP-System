@@ -47,6 +47,20 @@ ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orders    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 
+-- Row-level security does not apply to superusers, and the compose POSTGRES_USER
+-- is one. By default it also skips the table owner. So the server connects as a
+-- separate role that owns nothing, can only SELECT, and cannot bypass RLS.
+-- FORCE makes the policies apply to the owner as well.
+ALTER TABLE customers FORCE ROW LEVEL SECURITY;
+ALTER TABLE orders    FORCE ROW LEVEL SECURITY;
+ALTER TABLE documents FORCE ROW LEVEL SECURITY;
+
+-- Dev password. Change it, and the DSN in .env, for any real deployment.
+CREATE ROLE atlas_app LOGIN PASSWORD 'atlas_app'
+    NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+GRANT USAGE ON SCHEMA public TO atlas_app;
+GRANT SELECT ON customers, orders, documents TO atlas_app;
+
 CREATE POLICY tenant_isolation_customers ON customers
     USING (tenant_id = current_setting('app.tenant_id', true));
 
@@ -76,4 +90,8 @@ INSERT INTO documents (id, tenant_id, title, body, url) VALUES
     ('doc_shipping', 'acme',
      'Shipping timelines',
      'Standard shipping is 3-5 business days. Express is 1-2.',
-     'https://acme.example/shipping');
+     'https://acme.example/shipping'),
+    ('doc_globex_sla', 'globex',
+     'Support SLA',
+     'Gold customers get a first response within 2 hours.',
+     'https://globex.example/sla');

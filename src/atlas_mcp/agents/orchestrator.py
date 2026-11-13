@@ -21,7 +21,6 @@ counts and per-turn tool call counts in one place.
 # 3rd agent - synthesizer
 from __future__ import annotations
 
-import asyncio
 from dataclasses import asdict, dataclass
 from typing import Any
 

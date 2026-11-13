@@ -13,7 +13,7 @@ HTTP. That is deliberately the safe default.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 from urllib.parse import urlparse
 
 import httpx

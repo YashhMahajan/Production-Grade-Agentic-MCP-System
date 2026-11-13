@@ -90,3 +90,16 @@ async def metrics_endpoint(_request: Request) -> Response:
         content=generate_latest(registry),
         media_type=CONTENT_TYPE_LATEST,
     )
+
+
+def metrics_endpoint_for(metrics: MetricsRegistry):
+    """Endpoint that serves ``metrics``' own registry.
+
+    ``metrics_endpoint`` above reads a separate module-level registry, so the
+    counters the server increments never showed up on /metrics.
+    """
+
+    async def endpoint(_request: Request) -> Response:
+        return Response(generate_latest(metrics.registry), media_type=CONTENT_TYPE_LATEST)
+
+    return endpoint

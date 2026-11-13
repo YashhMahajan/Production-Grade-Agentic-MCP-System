@@ -27,8 +27,9 @@ class Plan:
     customer_id: str | None = None
 
 
-# A conservative pattern — alphanumerics, dashes, underscores, 3-64 chars.
-_CUSTOMER_ID_RE = re.compile(r"\b(cust|customer|account|acct)[_-]?([A-Za-z0-9\-_]{3,64})\b", re.I)
+# Matches ids shaped like CUST-1001. The separator is required: without it the
+# pattern matched ordinary words ("customers", "accounting") as ids.
+_CUSTOMER_ID_RE = re.compile(r"\b(?:cust|customer|acct|account)[_-][A-Za-z0-9]{2,60}\b", re.IGNORECASE)
 
 
 class PlannerAgent(Agent):
@@ -59,4 +60,5 @@ class PlannerAgent(Agent):
     @staticmethod
     def _extract_customer_id(question: str) -> str | None:
         match = _CUSTOMER_ID_RE.search(question)
-        return match.group(2) if match else None
+        # Ids are stored upper-case (CUST-1001), whatever case the user typed.
+        return match.group(0).upper() if match else None

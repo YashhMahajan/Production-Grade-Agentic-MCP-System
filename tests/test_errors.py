@@ -6,7 +6,6 @@ from atlas_mcp.errors.framework import (
     AuthError,
     CircuitOpenError,
     RateLimitError,
-    ToolError,
     UpstreamError,
     to_mcp_error,
 )

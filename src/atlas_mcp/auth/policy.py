@@ -28,7 +28,9 @@ anything tends to be one that nobody understands six months later.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Literal
 
@@ -56,7 +58,7 @@ class PolicyEngine:
         self.default_deny = default_deny #default_deny=True is our safety net, no explicit allow means denial.
 
     @classmethod
-    def from_file(cls, path: str | Path, default_deny: bool = True) -> "PolicyEngine":
+    def from_file(cls, path: str | Path, default_deny: bool = True) -> PolicyEngine:
         data = yaml.safe_load(Path(path).read_text())
         rules = [
             Rule(
@@ -71,7 +73,9 @@ class PolicyEngine:
         ]
         return cls(rules, default_deny=default_deny)
 
-    def check(self, subject: str, tenant: str, action: str, resource: str, context: dict) -> None:
+    def check(
+        self, subject: str | Sequence[str], tenant: str, action: str, resource: str, context: dict
+    ) -> None:
         """Raise :class:`PolicyError` if the call is not allowed.
 
         Matching rules are partitioned into allow and deny. Deny always wins.
@@ -84,11 +88,13 @@ class PolicyEngine:
         # 4. Deny wins immediately. If any deny rule matches, reject with a PolicyError.
         # 5. Default deny wins if no allow matches. No allow rule = no permission.
 
+        # A caller is its own subject plus every role it holds; any of them may match a rule.
+        subjects = (subject,) if isinstance(subject, str) else tuple(subject)
         matched_allow: list[Rule] = []
         matched_deny: list[Rule] = []
 
         for rule in self.rules:
-            if not self._matches(rule, subject, action, f"tenant:{tenant}/{resource}"):
+            if not self._matches(rule, subjects, action, f"tenant:{tenant}/{resource}"):
                 continue
             if rule.conditions and not self._conditions_match(rule.conditions, context):
                 continue
@@ -111,9 +117,9 @@ class PolicyEngine:
     # the glob is deliberately limited (exact match, trailing star, or bare *). No full regex, no complex expressions.
     
     @staticmethod
-    def _matches(rule: Rule, subject: str, action: str, resource: str) -> bool:
+    def _matches(rule: Rule, subjects: tuple[str, ...], action: str, resource: str) -> bool:
         return (
-            _glob_any(rule.subjects, subject)
+            any(_glob_any(rule.subjects, s) for s in subjects)
             and _glob_any(rule.actions, action)
             and _glob_any(rule.resources, resource)
         )
@@ -139,10 +145,9 @@ class PolicyEngine:
 
 # The default for unknown conditions is False, we fail closed.
 def _glob_any(patterns: tuple[str, ...], value: str) -> bool:
-    """Supports trailing-star globs and bare `*` wildcard."""
-    for pat in patterns:
-        if pat == "*" or pat == value:
-            return True
-        if pat.endswith("*") and value.startswith(pat[:-1]):
-            return True
-    return False
+    """fnmatch-style globs: ``*`` matches any run of characters, including ``/``.
+
+    The old trailing-star-only matcher treated the ``*`` in ``tenant:*/docs/*``
+    as a literal, so no per-tenant rule in policy.yaml could ever match.
+    """
+    return any(fnmatchcase(value, pat) for pat in patterns)

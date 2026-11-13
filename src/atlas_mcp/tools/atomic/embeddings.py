@@ -1,37 +1,45 @@
 """Shared embedding client.
 
-Isolated here so composed tools do not each rewire the same HTTP calls.
-Production deployments typically point this at a managed embedding endpoint
-(Cohere, Voyage, Anthropic's embeddings, or a self-hosted model behind
-TEI / TGI). For the demo we hit an OpenAI-compatible endpoint.
+One process-wide model, loaded on first use. Three tools need embeddings
+(semantic_search, hybrid_search, customer.build_context) and each used to build
+its own copy of the model at startup, which tripled memory and start time.
+
+The runtime is fastembed (ONNX), not sentence-transformers, so the install does
+not pull in PyTorch. The default model is BAAI/bge-base-en-v1.5; set
+ATLAS_EMBEDDING_MODEL to change it. Seed data and queries must use the same
+model, or vector search returns noise.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-from typing import Iterable
+from collections.abc import Iterable
+from functools import lru_cache
 
-import httpx
-
-from atlas_mcp.errors.framework import UpstreamError
+from atlas_mcp.config import get_settings
 
 
 class EmbeddingClient:
-    """Local HuggingFace embeddings client using sentence-transformers."""
+    def __init__(self, model_name: str | None = None, cache_dir: str | None = None):
+        # Imported here so the package imports without fastembed present.
+        from fastembed import TextEmbedding
 
-    def __init__(self, model_name: str | None = None):
-        # We import locally so the dependency is only required if used
-        from sentence_transformers import SentenceTransformer
-        
-        actual_model_name = model_name or os.environ.get("ATLAS_EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
-        hf_token = os.environ.get("ATLAS_HF_TOKEN")
-        
-        self.model = SentenceTransformer(actual_model_name, token=hf_token)
+        settings = get_settings()
+        self.model_name = model_name or settings.embedding_model
+        self.model = TextEmbedding(
+            model_name=self.model_name, cache_dir=cache_dir or settings.embedding_cache_dir
+        )
 
     async def embed(self, texts: Iterable[str]) -> list[list[float]]:
-        # Run local inference in a thread to avoid blocking the async event loop
-        def _encode():
-            return self.model.encode(list(texts), normalize_embeddings=True).tolist()
-        
+        items = list(texts)
+
+        def _encode() -> list[list[float]]:
+            return [vec.tolist() for vec in self.model.embed(items)]
+
+        # Inference is CPU bound; keep it off the event loop.
         return await asyncio.to_thread(_encode)
+
+
+@lru_cache(maxsize=1)
+def get_embedder() -> EmbeddingClient:
+    return EmbeddingClient()

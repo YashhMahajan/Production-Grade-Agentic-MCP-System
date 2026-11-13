@@ -32,6 +32,20 @@ services:
       - atlas-logs:/var/log/atlas
       - ./config:/app/config:ro
 
+  # One-shot: loads demo tickets and documents into Elasticsearch and Qdrant.
+  #   docker compose run --rm seed
+  seed:
+    build: .
+    image: atlas-mcp:dev
+    env_file: .env
+    entrypoint: [ "python", "/seed/seed.py" ]
+    volumes: [ "./deploy/seed:/seed:ro" ]
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+      qdrant: { condition: service_started }
+    restart: "no"
+    profiles: [ "seed" ]
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped

@@ -16,13 +16,12 @@ composed tool when it exists — exactly the behaviour we want.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
 from atlas_mcp.auth.policy import PolicyEngine
-from atlas_mcp.errors.framework import ToolError
-from atlas_mcp.tools.atomic.embeddings import EmbeddingClient
+from atlas_mcp.tools.atomic.embeddings import get_embedder
 from atlas_mcp.tools.atomic.postgres import PostgresQueryInput, PostgresQueryTool
 from atlas_mcp.tools.atomic.vector_search import VectorSearchInput, VectorSearchTool
 from atlas_mcp.tools.base import Tool, ToolLevel, ToolMetadata
@@ -55,13 +54,12 @@ class SemanticSearchTool(Tool):
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)
-        self.embedder = EmbeddingClient()
         self.vector_tool = VectorSearchTool(policy)
         self.postgres_tool = PostgresQueryTool(policy)
 
     async def run(self, tenant: str, args: SemanticSearchInput) -> dict:  # type: ignore[override]
         # 1. Embed.
-        vectors = await self.embedder.embed([args.query])
+        vectors = await get_embedder().embed([args.query])
         query_vector = vectors[0]
 
         # 2. Vector search.
@@ -79,7 +77,7 @@ class SemanticSearchTool(Tool):
                 "query": args.query,
                 "results": [
                     {
-                        "id": m["id"],
+                        "id": m["doc_id"],
                         "score": m["score"],
                         "preview": (m["payload"].get("text") or "")[:300],
                         "metadata": {k: v for k, v in m["payload"].items() if k != "text"},
@@ -88,7 +86,7 @@ class SemanticSearchTool(Tool):
                 ],
             }
 
-        ids = [str(m["id"]) for m in matches]
+        ids = [str(m["doc_id"]) for m in matches]
         # Use ANY array binding; we validated earlier that pg_query permits SELECT.
         pg_args = PostgresQueryInput(
             sql="SELECT id, title, body, url FROM documents WHERE id = ANY($1::text[])",
@@ -100,9 +98,9 @@ class SemanticSearchTool(Tool):
 
         results = []
         for m in matches:
-            doc = by_id.get(str(m["id"]), {})
+            doc = by_id.get(str(m["doc_id"]), {})
             results.append({
-                "id": m["id"],
+                "id": m["doc_id"],
                 "score": m["score"],
                 "title": doc.get("title"),
                 "body": doc.get("body"),

@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+
 # slots=True makes it memory-efficient, which matters when you are processing thousands of calls per second.
 @dataclass(frozen=True, slots=True)
 class ToolCallEnvelope:
@@ -29,3 +30,6 @@ class ToolCallEnvelope:
     # Delegator is the human who authorised the agent. Audit logs include it
     # so "who actually asked for this" survives the agent layer.
     delegator: str | None = None
+    # What the token grants. Authorization re-checks these on every call.
+    scopes: frozenset[str] = frozenset()
+    roles: frozenset[str] = frozenset()

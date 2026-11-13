@@ -11,7 +11,7 @@ Read-only access is available to agents without approval.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import aioboto3
 from botocore.exceptions import ClientError
@@ -46,6 +46,9 @@ class S3GetTool(Tool):
         super().__init__(policy)
         self.settings = get_settings()
         self._session = aioboto3.Session()
+
+    def policy_resource(self, args: S3GetInput) -> str:  # type: ignore[override]
+        return args.key.lstrip("/")
 
     async def run(self, tenant: str, args: S3GetInput) -> dict:  # type: ignore[override]
         prefixed_key = _tenant_key(tenant, args.key)
@@ -93,6 +96,9 @@ class S3PutTool(Tool):
         super().__init__(policy)
         self.settings = get_settings()
         self._session = aioboto3.Session()
+
+    def policy_resource(self, args: S3PutInput) -> str:  # type: ignore[override]
+        return args.key.lstrip("/")
 
     async def run(self, tenant: str, args: S3PutInput) -> dict:  # type: ignore[override]
         prefixed_key = _tenant_key(tenant, args.key)

@@ -11,6 +11,7 @@ into a policy rejection instead of a dropped table.
 
 from __future__ import annotations
 
+import re
 from typing import Any, ClassVar
 
 import asyncpg
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from atlas_mcp.auth.policy import PolicyEngine
 from atlas_mcp.config import get_settings
-from atlas_mcp.errors.framework import UpstreamError, ValidationError
+from atlas_mcp.errors.framework import UpstreamError
 from atlas_mcp.tools.base import Tool, ToolLevel, ToolMetadata
 
 # The forbidden keywords list is our defense-in-depth against prompt injection. Even if the policy engine has a bug, this list makes it impossible for any SQL containing DROP to execute through this tool.
@@ -27,6 +28,9 @@ _FORBIDDEN_KEYWORDS = (
     "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE", "ALTER",
     "CREATE", "GRANT", "REVOKE", "COPY", "CALL", "EXECUTE",
 )
+
+_TABLE_RE = re.compile(r"\bFROM\s+([A-Za-z_][\w.]*)", re.IGNORECASE)
+_WORD_RE = re.compile(r"[a-z_][a-z0-9_]*")
 
 # Pydantic schema that validates inputs
 class PostgresQueryInput(BaseModel):
@@ -75,6 +79,16 @@ class PostgresQueryTool(Tool):
         super().__init__(policy)
         self.settings = get_settings()
 
+    def policy_resource(self, args: PostgresQueryInput) -> str:  # type: ignore[override]
+        # "analytics.orders" becomes "analytics/orders" so policy resources read like paths.
+        m = _TABLE_RE.search(args.sql)
+        return m.group(1).replace(".", "/") if m else "*"
+
+    def policy_context(self, args: PostgresQueryInput) -> dict:  # type: ignore[override]
+        # Every identifier in the query counts as a requested column for the PII rule.
+        # That over-matches (a table named ssn would trip it), which is the safe side.
+        return {"sql": args.sql, "columns": _WORD_RE.findall(args.sql.lower())}
+
     async def _ensure_pool(self) -> asyncpg.Pool:
         if PostgresQueryTool._pool is None:
             PostgresQueryTool._pool = await asyncpg.create_pool(
@@ -89,12 +103,14 @@ class PostgresQueryTool(Tool):
         pool = await self._ensure_pool()
         try:
             async with pool.acquire() as conn:
-                # Tenant isolation is enforced at the RLS level in Postgres.
-                # We set the tenant id on the connection before every query.
-                await conn.execute("SET LOCAL app.tenant_id = $1", tenant)
-                rows = await conn.fetch(
-                    f"{args.sql} LIMIT {args.max_rows}", *args.params
-                )
+                # Read-only transaction: even a SELECT that slips past the keyword
+                # filter cannot write. set_config(..., true) is the transaction-local
+                # form of SET; SET itself cannot take a bind parameter.
+                async with conn.transaction(readonly=True):
+                    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant)
+                    cursor = await conn.cursor(args.sql, *args.params)
+                    # One extra row tells us whether the result was cut off.
+                    rows = await cursor.fetch(args.max_rows + 1)
         except asyncpg.PostgresError as exc:
             # Distinguish deterministic query errors from temporary or brief ones.
             retryable = isinstance(exc, (asyncpg.ConnectionDoesNotExistError,
@@ -107,9 +123,11 @@ class PostgresQueryTool(Tool):
                 context={"sqlstate": getattr(exc, "sqlstate", None)},
             ) from exc
 
+        truncated = len(rows) > args.max_rows
+        rows = rows[: args.max_rows]
         return {
             "columns": list(rows[0].keys()) if rows else [],
             "rows": [dict(r) for r in rows],
             "row_count": len(rows),
-            "truncated": len(rows) >= args.max_rows,
+            "truncated": truncated,
         }

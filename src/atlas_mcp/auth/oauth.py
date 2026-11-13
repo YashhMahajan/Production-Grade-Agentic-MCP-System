@@ -44,6 +44,8 @@ class Principal:
     token_id: str                   # jti — for revocation and audit
     issued_at: int
     expires_at: int
+    # Policy subjects, e.g. "role:support_copilot". policy.yaml rules match on these.
+    roles: frozenset[str] = frozenset()
 
     def has_scope(self, required: str) -> bool:
         # Scope strings follow `tool:<name>:<action>` convention, e.g. `tool:postgres:read`.
@@ -89,6 +91,7 @@ class TokenValidator:
             token_id=claims["jti"],
             issued_at=claims["iat"],
             expires_at=claims["exp"],
+            roles=frozenset(r if ":" in r else f"role:{r}" for r in claims.get("roles", [])),
         )
 
 

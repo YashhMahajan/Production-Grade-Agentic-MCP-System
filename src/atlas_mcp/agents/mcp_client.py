@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,14 +51,21 @@ class ToolResult:
 class AtlasMCPClient:
     """Minimal JSON-RPC 2.0 client over Streamable HTTP."""
 
-    def __init__(self, base_url: str, bearer_token: str, tenant: str | None = None):
+    def __init__(
+        self,
+        base_url: str,
+        bearer_token: str,
+        tenant: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.bearer_token = bearer_token
         self.tenant = tenant
+        self._transport = transport  # tests pass an in-process ASGI transport
         self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
 
-    async def __aenter__(self) -> "AtlasMCPClient":
+    async def __aenter__(self) -> AtlasMCPClient:
         headers = {
             "Authorization": f"Bearer {self.bearer_token}",
             "Content-Type": "application/json",
@@ -68,7 +74,7 @@ class AtlasMCPClient:
         if self.tenant:
             headers["X-Tenant-Id"] = self.tenant
         self._client = httpx.AsyncClient(
-            base_url=self.base_url, headers=headers, timeout=30.0
+            base_url=self.base_url, headers=headers, timeout=30.0, transport=self._transport
         )
         await self._initialize()
         return self
@@ -80,16 +86,17 @@ class AtlasMCPClient:
 
     # ── MCP protocol lifecycle ────────────────────────────────────────────
     async def _initialize(self) -> None:
-        resp = await self._rpc(
+        await self._rpc(
             "initialize",
             {
-                "protocolVersion": "2025-11",
+                "protocolVersion": "2025-06-18",
                 "capabilities": {"tools": {}},
                 "clientInfo": {"name": "atlas-agent", "version": "0.1.0"},
             },
         )
-        # Server echoes a session id we reuse for subsequent requests.
-        self._session_id = resp.get("sessionId")
+        # Stateful servers return the session id in a response header (see _rpc);
+        # stateless servers return none. Either way the spec wants this notification.
+        await self._notify("notifications/initialized")
 
     async def list_tools(self) -> list[dict]:
         resp = await self._rpc("tools/list", {})
@@ -117,6 +124,15 @@ class AtlasMCPClient:
                 value = content[0]["text"]
         else:
             value = resp
+        if resp.get("isError"):
+            # The server puts its structured error (code, retryable, hint) in the text block.
+            data = value if isinstance(value, dict) else {"hint": str(value)}
+            return ToolResult(
+                ok=False,
+                error_code=data.get("code") or "tool_error",
+                retryable=bool(data.get("retryable")),
+                hint=data.get("hint"),
+            )
         return ToolResult(ok=True, value=value)
 
     # ── Low-level RPC ─────────────────────────────────────────────────────
@@ -128,17 +144,35 @@ class AtlasMCPClient:
             "method": method,
             "params": params,
         }
-        headers = {}
-        if self._session_id:
-            headers["Mcp-Session-Id"] = self._session_id
-        resp = await self._client.post("/mcp", json=request, headers=headers)
-        resp.raise_for_status()
-        body = resp.json()
+        resp = await self._post(request)
+        body = _decode_body(resp)
         if "error" in body:
             err = body["error"]
             raise MCPError(code=err.get("code", -32000), message=err.get("message", ""),
                            data=err.get("data"))
         return body.get("result", {})
+
+    async def _notify(self, method: str) -> None:
+        """Send a JSON-RPC notification: no id, and the server answers 202 with no body."""
+        await self._post({"jsonrpc": "2.0", "method": method})
+
+    async def _post(self, payload: dict) -> httpx.Response:
+        assert self._client is not None, "use `async with AtlasMCPClient(...)`"
+        headers = {"Mcp-Session-Id": self._session_id} if self._session_id else {}
+        resp = await self._client.post("/mcp", json=payload, headers=headers)
+        resp.raise_for_status()
+        self._session_id = resp.headers.get("mcp-session-id", self._session_id)
+        return resp
+
+
+def _decode_body(resp: httpx.Response) -> dict:
+    """Streamable HTTP answers with JSON or a one-event SSE stream; accept both."""
+    if "text/event-stream" in resp.headers.get("content-type", ""):
+        for line in resp.text.splitlines():
+            if line.startswith("data:"):
+                return json.loads(line[5:].strip())
+        raise MCPError(code=-32000, message="event stream carried no data event")
+    return resp.json()
 
 
 class MCPError(Exception):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from elasticsearch import AsyncElasticsearch, ApiError, TransportError
 from pydantic import BaseModel, Field

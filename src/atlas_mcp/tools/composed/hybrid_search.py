@@ -11,13 +11,13 @@ natural-language queries (where dense wins).
 # score = 1 / (k + rank) per retriever, summed across retrievers. k=60 is the canonical default from the original paper.
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
 from atlas_mcp.auth.policy import PolicyEngine
 from atlas_mcp.tools.atomic.elasticsearch import ElasticsearchSearchInput, ElasticsearchSearchTool
-from atlas_mcp.tools.atomic.embeddings import EmbeddingClient
+from atlas_mcp.tools.atomic.embeddings import get_embedder
 from atlas_mcp.tools.atomic.vector_search import VectorSearchInput, VectorSearchTool
 from atlas_mcp.tools.base import Tool, ToolLevel, ToolMetadata
 
@@ -49,7 +49,6 @@ class HybridSearchTool(Tool):
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)
-        self.embedder = EmbeddingClient()
         self.es_tool = ElasticsearchSearchTool(policy)
         self.vector_tool = VectorSearchTool(policy)
 
@@ -67,7 +66,7 @@ class HybridSearchTool(Tool):
                 ),
             )
         )
-        emb_task = asyncio.create_task(self.embedder.embed([args.query]))
+        emb_task = asyncio.create_task(get_embedder().embed([args.query]))
 
         es_result, embeddings = await asyncio.gather(es_task, emb_task)
 
@@ -80,7 +79,7 @@ class HybridSearchTool(Tool):
 
         # Build (id → rank) maps.
         lexical_ranks = {hit["id"]: rank for rank, hit in enumerate(es_result["hits"], start=1)}
-        dense_ranks = {str(m["id"]): rank for rank, m in enumerate(vs_result["matches"], start=1)}
+        dense_ranks = {str(m["doc_id"]): rank for rank, m in enumerate(vs_result["matches"], start=1)}
 
         # Fuse with RRF.
         all_ids = set(lexical_ranks) | set(dense_ranks)
@@ -96,7 +95,7 @@ class HybridSearchTool(Tool):
 
         # Hydrate from lexical result where available (it carries _source).
         by_id_es = {h["id"]: h for h in es_result["hits"]}
-        by_id_vec = {str(m["id"]): m for m in vs_result["matches"]}
+        by_id_vec = {str(m["doc_id"]): m for m in vs_result["matches"]}
 
         results = []
         for doc_id, rrf_score in scored[: args.top_k]:

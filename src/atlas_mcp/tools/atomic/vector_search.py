@@ -87,7 +87,14 @@ class VectorSearchTool(Tool):
         payload = resp.json()
         return {
             "matches": [
-                {"id": r["id"], "score": r["score"], "payload": r.get("payload") or {}}
+                {
+                    "id": r["id"],
+                    # Qdrant ids must be ints or UUIDs. The source document id lives in
+                    # the payload, so composed tools join on this field instead.
+                    "doc_id": (r.get("payload") or {}).get("doc_id", r["id"]),
+                    "score": r["score"],
+                    "payload": r.get("payload") or {},
+                }
                 for r in payload.get("result", [])
             ]
         }
