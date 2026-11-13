@@ -8,7 +8,9 @@ Scout MCP: a multi-tenant MCP server that gives agents access to Postgres, Elast
 
 Docs in `docs/`, exactly six files: ARCHITECTURE, ISSUES, PRD, AGENTS, PERFORMANCE, DATA-MODEL. New knowledge goes into one of them or into this file. Do not add other markdown files.
 
-## State (0.3.0)
+## State (0.3.0, released)
+
+Released as v0.3.0 on 2026-11-13, tagged at e6ec00a, the commit CI verified. The next session is for making the MCP more thorough and better; start from the open work list below.
 
 - 15 audited defects fixed, plus 27 more found while fixing and while running the real stack in CI. All in `docs/ISSUES.md`, each with the test that guards it.
 - 76 tests pass in about 4 s with no Docker, and `ruff` is clean.
@@ -27,7 +29,7 @@ Docs in `docs/`, exactly six files: ARCHITECTURE, ISSUES, PRD, AGENTS, PERFORMAN
 - Functionality first: fix and make it work before adding features.
 - Numbers only if a script in `scripts/` or a CI run measured them, or a linked source published them. Never invent a speedup.
 - Make small changes; every line should trace to the request. Do not run `ruff --fix` with extra rules.
-- Do not push to `main`, tag or release unless asked.
+- Do not push to `main`, tag or release unless asked. Branches `ship-ready` and `harden-image-and-docs` are merged and can be deleted when the owner says so.
 
 ## Commands
 
