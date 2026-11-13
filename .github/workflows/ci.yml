@@ -81,8 +81,12 @@ jobs:
       - name: Start every service and wait for health
         run: docker compose up -d --wait --wait-timeout 900
 
-      - name: Service status
-        run: docker compose ps
+      - name: Service status and server startup log
+        run: |
+          docker compose ps
+          echo "::group::atlas-mcp startup log"
+          docker compose logs --no-color --tail 60 atlas-mcp
+          echo "::endgroup::"
 
       - name: Seed demo data
         run: docker compose --profile seed run --rm seed
@@ -160,19 +164,17 @@ jobs:
           pip install -U pip setuptools
           pip install -e . pip-audit
           pip-audit --skip-editable
+      # Trivy runs from its own pinned image. The setup action pinned a Trivy release
+      # that had since been removed, and one fewer third-party action is one fewer thing to trust.
       - name: Dockerfile misconfiguration
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          scan-type: config
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          exit-code: "1"
+        run: docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.76.2 config --severity HIGH,CRITICAL --exit-code 1 /src
       - name: Build the image
         run: docker build -t atlas-mcp:scan .
       - name: Image vulnerabilities (fail on fixable CRITICAL)
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: atlas-mcp:scan
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
+            image --severity CRITICAL --ignore-unfixed --exit-code 1 atlas-mcp:scan
+      - name: Image vulnerability counts (informational)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
+            image --severity HIGH,CRITICAL --ignore-unfixed --format table atlas-mcp:scan | tee trivy-image.txt | tail -40 || true

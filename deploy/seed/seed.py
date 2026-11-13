@@ -73,7 +73,9 @@ def seed_elasticsearch() -> None:
 
 
 def seed_qdrant() -> None:
-    model = TextEmbedding(model_name=MODEL)
+    # The image has the model baked into this directory, and the seed container has no
+    # route to the internet, so it must be read from there, never downloaded.
+    model = TextEmbedding(model_name=MODEL, cache_dir=os.environ.get("ATLAS_EMBEDDING_CACHE_DIR"))
     texts = [f'{d["title"]}. {d["body"]}' for d in DOCUMENTS]
     vectors = [v.tolist() for v in model.embed(texts)]
     dim = len(vectors[0])
