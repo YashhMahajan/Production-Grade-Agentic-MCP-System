@@ -74,6 +74,7 @@ class TokenValidator:
                 audience=self.settings.auth_audience,
                 issuer=self.settings.auth_issuer,
                 options={"require": ["exp", "iat", "sub", "jti", "aud", "iss"]},
+                leeway=30,  # seconds of clock skew between the issuer and this server
             )
         except jwt.ExpiredSignatureError as exc:
             raise AuthError("token_expired", retryable=True, hint="refresh your token") from exc
@@ -91,8 +92,14 @@ class TokenValidator:
             token_id=claims["jti"],
             issued_at=claims["iat"],
             expires_at=claims["exp"],
-            roles=frozenset(r if ":" in r else f"role:{r}" for r in claims.get("roles", [])),
+            roles=_roles(claims.get("roles", [])),
         )
+
+
+def _roles(claim) -> frozenset[str]:
+    """Accept a list or a space-separated string; bare names become ``role:<name>``."""
+    items = claim.split() if isinstance(claim, str) else claim
+    return frozenset(r if ":" in r else f"role:{r}" for r in items)
 
 
 @lru_cache(maxsize=1)

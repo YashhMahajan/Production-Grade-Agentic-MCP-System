@@ -80,7 +80,7 @@ class RateLimiter:
             refill_per_minute=settings.rate_limit_default_rpm,
         )
         # Per-tool overrides. Extend this table as you add expensive tools.
-        self._overrides: dict[str, Quota] = {
+        self._overrides: dict[str, Quota] = {} if not settings.rate_limit_per_tool_overrides else {
             # Expensive workflow tools get tighter quotas.
             "research.topic": Quota(capacity=3, refill_per_minute=10),
             "semantic_search": Quota(capacity=30, refill_per_minute=120),

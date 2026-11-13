@@ -173,7 +173,7 @@ async def test_vector_tool_exposes_doc_id(monkeypatch):
         def __init__(self, *a, **k): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *a): pass
-        async def post(self, url, json): return Resp()
+        async def post(self, url, json, headers=None): return Resp()
     monkeypatch.setattr(httpx, "AsyncClient", Client)
     from atlas_mcp.tools.atomic.vector_search import VectorSearchInput
     out = await VectorSearchTool(POLICY).run("acme", VectorSearchInput(collection="c", vector=[1.0]))

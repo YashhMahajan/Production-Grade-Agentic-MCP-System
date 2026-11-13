@@ -34,9 +34,9 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def principal(tenant="acme", scopes=(), roles=()) -> Principal:
+def principal(tenant="acme", scopes=(), roles=(), subject="agent:test") -> Principal:
     return Principal(
-        subject="agent:test", delegator="user:ana", tenant=tenant, scopes=frozenset(scopes),
+        subject=subject, delegator="user:ana", tenant=tenant, scopes=frozenset(scopes),
         token_id="jti-1", issued_at=0, expires_at=2**31, roles=frozenset(roles),
     )
 
@@ -47,6 +47,12 @@ TOKENS = {
     "analyst": principal(scopes=(PG,), roles=("role:analyst",)),
     "noscope": principal(scopes=(), roles=("role:support_copilot",)),
     "writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",)),
+    # Reviewers hold approval:review and are a different subject from the writer.
+    "reviewer": principal(scopes=("approval:review",), subject="user:reviewer"),
+    "reviewer_globex": principal(tenant="globex", scopes=("approval:review",), subject="user:g"),
+    # Same subject as "writer": used to show that nobody approves their own request.
+    "self_reviewer": principal(scopes=("approval:review",)),
+    "no_review_scope": principal(scopes=(), subject="user:nope"),
 }
 
 

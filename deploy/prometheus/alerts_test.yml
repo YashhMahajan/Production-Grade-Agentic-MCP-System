@@ -1,0 +1,57 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: scrape target down raises AtlasDown after a minute
+    interval: 1m
+    input_series:
+      - series: 'up{job="atlas-mcp"}'
+        values: "1 1 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AtlasDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: AtlasDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: atlas-mcp }
+            exp_annotations: { summary: "Atlas MCP is not answering scrapes" }
+
+  - name: an open circuit alerts, a closed one does not
+    interval: 1m
+    input_series:
+      - series: 'atlas_circuit_state{tool="postgres.query"}'
+        values: "0 0 2 2 2 2"
+      - series: 'atlas_circuit_state{tool="vector.search"}'
+        values: "0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AtlasCircuitOpen
+        exp_alerts:
+          - exp_labels: { severity: warning, tool: postgres.query }
+            exp_annotations: { summary: "Circuit breaker open for postgres.query" }
+
+  - name: caller mistakes do not trip the server error alert, backend timeouts do
+    interval: 1m
+    input_series:
+      # 1 ok call per second and 10 policy denials per second: all of it caller error
+      - series: 'atlas_tool_calls_total{tool="postgres.query",status="ok"}'
+        values: "0+60x20"
+      - series: 'atlas_tool_calls_total{tool="postgres.query",status="denied_by_policy"}'
+        values: "0+600x20"
+      # a second tool whose calls mostly time out
+      - series: 'atlas_tool_calls_total{tool="vector.search",status="ok"}'
+        values: "0x19"
+      - series: 'atlas_tool_calls_total{tool="vector.search",status="timeout"}'
+        values: "0x5 600+600x13"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AtlasHighServerErrorRatio
+        exp_alerts: []
+      - eval_time: 19m
+        alertname: AtlasHighServerErrorRatio
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations: { summary: "More than 5% of tool calls fail on the server side" }

@@ -68,8 +68,9 @@ class VectorSearchTool(Tool):
         body = {"vector": args.vector, "limit": args.top_k, "filter": combined_filter, "with_payload": True}
 
         try:
+            headers = {"api-key": self.settings.vector_db_api_key} if self.settings.vector_db_api_key else {}
             async with httpx.AsyncClient(timeout=self.meta.timeout_ms / 1000) as client:
-                resp = await client.post(url, json=body)
+                resp = await client.post(url, json=body, headers=headers)
                 resp.raise_for_status()
         except httpx.TimeoutException as exc:
             raise UpstreamError("vector_timeout", retryable=True, hint=str(exc)) from exc

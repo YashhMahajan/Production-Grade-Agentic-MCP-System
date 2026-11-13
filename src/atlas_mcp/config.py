@@ -53,6 +53,8 @@ class ServerSettings(BaseSettings):
     # ── Component 8: Rate limiting ──────────────────────────────────────────
     rate_limit_default_rpm: int = 60
     rate_limit_burst: int = 20
+    # Tighter quotas for expensive tools (see ratelimit/limiter.py). Turn off to load test.
+    rate_limit_per_tool_overrides: bool = True
     redis_url: str = "redis://localhost:6379/0"
 
     # ── Component 9: Caching ────────────────────────────────────────────────
@@ -75,9 +77,12 @@ class ServerSettings(BaseSettings):
     # ── Data layer ──────────────────────────────────────────────────────────
     postgres_dsn: str = "postgresql://atlas:atlas@localhost:5432/atlas"
     elasticsearch_url: str = "http://localhost:9200"
+    elasticsearch_user: str = "elastic"
+    elasticsearch_password: str | None = None  # unset means no authentication
     s3_endpoint: str | None = None
     s3_bucket: str = "atlas-mcp-data"
     vector_db_url: str = "http://localhost:6333"  # Qdrant default
+    vector_db_api_key: str | None = None
 
     # ── Embeddings ──────────────────────────────────────────────────────────
     # bge-base: 109M params / 768 dims. bge-large scores ~1 point higher on MTEB

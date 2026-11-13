@@ -1,0 +1,46 @@
+# Alert rules for Atlas MCP. Unit tests: alerts_test.yml, run with
+#   promtool test rules deploy/prometheus/alerts_test.yml
+#
+# "Server fault" statuses are the error codes that mean a backend or Atlas itself
+# failed. Validation, policy and rate-limit rejections are the caller's doing and
+# do not count toward the error ratio.
+groups:
+  - name: atlas-mcp
+    rules:
+      - alert: AtlasDown
+        expr: up{job="atlas-mcp"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Atlas MCP is not answering scrapes"
+
+      - alert: AtlasHighServerErrorRatio
+        expr: |
+          sum(rate(atlas_tool_calls_total{status=~"timeout|internal_error|circuit_open|postgres_error|elasticsearch_error|vector_.*|s3_error|http_.*"}[5m]))
+            / sum(rate(atlas_tool_calls_total[5m])) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 5% of tool calls fail on the server side"
+
+      - alert: AtlasCircuitOpen
+        expr: atlas_circuit_state == 2
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.tool }}"
+
+      - alert: AtlasToolLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le, tool) (rate(atlas_tool_latency_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 latency above 1 s for {{ $labels.tool }}"
+
+      - alert: AtlasRateLimitingSpike
+        expr: sum(rate(atlas_rate_limited_total[5m])) > 1
+        for: 5m
+        labels: { severity: info }
+        annotations:
+          summary: "Callers are being rate limited more than once a second"

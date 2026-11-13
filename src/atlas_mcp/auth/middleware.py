@@ -10,6 +10,8 @@ MCP hosts can trigger their OAuth flow.
 
 from __future__ import annotations
 
+import asyncio
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -42,7 +44,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         bearer = header[7:].strip()
         try:
-            principal = self.validator.validate(bearer)
+            # PyJWKClient fetches the signing keys with a blocking HTTP call whenever its
+            # cache is cold or expired, so validate off the event loop.
+            principal = await asyncio.to_thread(self.validator.validate, bearer)
         except AuthError as exc:
             return self._unauthenticated(exc.code)
 

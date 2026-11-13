@@ -4,7 +4,8 @@ Each metric has *just enough* labels to be useful and not a cardinality bomb.
 Notably, we do NOT label by tenant or caller — those explode the series
 count and belong in logs and traces, not gauges.
 
-Grafana dashboard consuming these metrics ships in ``deploy/grafana/``.
+The Grafana dashboard that reads these metrics is provisioned from
+``deploy/grafana/``.
 """
 
 from __future__ import annotations
@@ -62,11 +63,6 @@ class MetricsRegistry:
             "atlas_circuit_state",
             "Circuit breaker state (0=closed, 1=half_open, 2=open).",
             ["tool"],
-            registry=self.registry,
-        )
-        self.active_sessions = Gauge(
-            "atlas_active_sessions",
-            "Active MCP sessions on this replica.",
             registry=self.registry,
         )
 

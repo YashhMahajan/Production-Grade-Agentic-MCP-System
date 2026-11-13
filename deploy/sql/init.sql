@@ -95,3 +95,11 @@ INSERT INTO documents (id, tenant_id, title, body, url) VALUES
      'Support SLA',
      'Gold customers get a first response within 2 hours.',
      'https://globex.example/sla');
+
+-- ── Keycloak's own database ──────────────────────────────────────────────
+-- A separate role and database, so the identity provider shares the Postgres
+-- server but nothing else: it cannot read atlas data, and atlas_app cannot read
+-- its tables. Dev password; change it for any real deployment.
+CREATE ROLE keycloak LOGIN PASSWORD 'keycloak'
+    NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+CREATE DATABASE keycloak OWNER keycloak;

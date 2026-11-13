@@ -26,6 +26,9 @@ from elasticsearch import Elasticsearch
 from fastembed import TextEmbedding
 
 ES_URL = os.environ.get("ATLAS_ELASTICSEARCH_URL", "http://localhost:9200")
+ES_USER = os.environ.get("ATLAS_ELASTICSEARCH_USER", "elastic")
+ES_PASSWORD = os.environ.get("ATLAS_ELASTICSEARCH_PASSWORD")
+QDRANT_KEY = os.environ.get("ATLAS_VECTOR_DB_API_KEY")
 QDRANT_URL = os.environ.get("ATLAS_VECTOR_DB_URL", "http://localhost:6333").rstrip("/")
 MODEL = os.environ.get("ATLAS_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 COLLECTION = "support_docs"
@@ -58,7 +61,7 @@ def point_id(doc_id: str) -> str:
 
 
 def seed_elasticsearch() -> None:
-    es = Elasticsearch(ES_URL)
+    es = Elasticsearch(ES_URL, basic_auth=(ES_USER, ES_PASSWORD) if ES_PASSWORD else None)
     for index, rows in (("tickets", TICKETS), ("documents", DOCUMENTS)):
         es.options(ignore_status=404).indices.delete(index=index)
         es.indices.create(index=index)
@@ -74,7 +77,8 @@ def seed_qdrant() -> None:
     texts = [f'{d["title"]}. {d["body"]}' for d in DOCUMENTS]
     vectors = [v.tolist() for v in model.embed(texts)]
     dim = len(vectors[0])
-    with httpx.Client(timeout=30) as http:
+    headers = {"api-key": QDRANT_KEY} if QDRANT_KEY else {}
+    with httpx.Client(timeout=30, headers=headers) as http:
         http.delete(f"{QDRANT_URL}/collections/{COLLECTION}")
         http.put(
             f"{QDRANT_URL}/collections/{COLLECTION}",

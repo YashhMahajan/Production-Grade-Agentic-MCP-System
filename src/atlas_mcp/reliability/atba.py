@@ -93,9 +93,14 @@ class ATBA:
         # If the budget is tight, shrink; if the tool is fast, do not over-allocate.
         return max(self.MIN_CALL_TIMEOUT_S, min(target, fair_share))
 
-    async def call_with_budget(self, tool: str, coro) -> any:
-        """Run ``coro`` under the per-call timeout derived from the budget."""
+    async def call_with_budget(self, tool: str, coro, cap_s: float | None = None) -> any:
+        """Run ``coro`` under the per-call timeout derived from the budget.
+
+        ``cap_s`` is the tool's own declared timeout; the call gets whichever is shorter.
+        """
         timeout = self.timeout_for(tool)
+        if cap_s is not None:
+            timeout = min(timeout, cap_s)
         ctx = _current_budget.get()
         if ctx is not None:
             ctx.calls_made += 1

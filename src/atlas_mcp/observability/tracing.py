@@ -26,6 +26,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from atlas_mcp import __version__
 from atlas_mcp.config import ServerSettings
 
 
@@ -40,7 +41,7 @@ def init_tracing(settings: ServerSettings) -> None:
 
     resource = Resource.create({
         "service.name": settings.service_name,
-        "service.version": "0.1.0",
+        "service.version": __version__,
     })
     provider = TracerProvider(resource=resource)
 

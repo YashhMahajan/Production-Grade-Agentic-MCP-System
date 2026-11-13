@@ -1,0 +1,42 @@
+# Edge proxy: the only service reachable from outside the compose network.
+#
+# TLS comes from Caddy's local CA, so a browser or client needs that CA (see
+# README) or has to skip verification in development. In production replace
+# `tls internal` with a real certificate.
+#
+# Only the paths an MCP client needs are forwarded. /metrics and /readyz stay
+# inside the network, where Prometheus and the orchestrator reach them directly.
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://localhost:8443 {
+	tls internal
+
+	log {
+		output stdout
+		format json
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Tool arguments are small. A body this size is not a tool call.
+	request_body {
+		max_size 1MB
+	}
+
+	@public path /mcp /approvals/* /.well-known/mcp-server /healthz
+	handle @public {
+		reverse_proxy atlas-mcp:8080
+	}
+
+	handle {
+		respond "not found" 404
+	}
+}

@@ -50,7 +50,7 @@ USER atlas
 EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
-    CMD curl -fsS http://localhost:8080/healthz || exit 1
+    CMD curl -fsS http://localhost:8080/readyz || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["atlas-mcp"]

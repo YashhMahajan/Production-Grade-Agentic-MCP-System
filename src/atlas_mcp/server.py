@@ -20,7 +20,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import uvicorn
 from mcp.server import Server
@@ -28,6 +28,7 @@ from mcp.server.stdio import stdio_server
 from redis.asyncio import Redis
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
@@ -40,6 +41,7 @@ from atlas_mcp.errors.framework import (
     PolicyError,
     RateLimitError,
     ToolError,
+    UpstreamError,
     to_call_tool_result,
 )
 from atlas_mcp.governance.approval import ApprovalGate, PendingApprovalError
@@ -48,7 +50,8 @@ from atlas_mcp.observability.audit import AuditLogger
 from atlas_mcp.observability.metrics import MetricsRegistry, metrics_endpoint_for
 from atlas_mcp.observability.tracing import current_trace_id, get_tracer, init_tracing
 from atlas_mcp.ratelimit.limiter import RateLimiter
-from atlas_mcp.reliability.circuit_breaker import CircuitBreakerRegistry
+from atlas_mcp.reliability.atba import ATBA
+from atlas_mcp.reliability.circuit_breaker import CircuitBreakerRegistry, State
 from atlas_mcp.reliability.retry import with_retry
 from atlas_mcp.tools.registry import ToolRegistry
 from atlas_mcp.validation.schemas import ToolCallEnvelope
@@ -60,6 +63,11 @@ logger = logging.getLogger(__name__)
 # is the only caller.
 _STDIO_ROLES = frozenset({"role:support_copilot"})
 _STDIO_SCOPES = frozenset({"tool:*:admin"})
+
+_CIRCUIT_GAUGE = {State.CLOSED: 0, State.HALF_OPEN: 1, State.OPEN: 2}
+
+# Scope that lets a human review pending approvals.
+APPROVAL_REVIEW_SCOPE = "approval:review"
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,7 @@ class AtlasServer:
         self.cache = CacheManager(settings)
         self.limiter = RateLimiter(settings)
         self.breakers = CircuitBreakerRegistry(settings)
+        self.atba = ATBA(settings.atba_total_budget_ms)
         self.metrics = MetricsRegistry()
         # Built in startup(): they open files and connections.
         self.audit: AuditLogger | None = None
@@ -184,6 +193,7 @@ class AtlasServer:
 
     async def _run_pipeline(self, envelope: ToolCallEnvelope) -> dict:
         tool = self.registry.get(envelope.tool)
+        self.atba.begin()  # a fresh time budget for this call
         # 5. Validate. The approval id is not a tool argument, so lift it out first.
         raw_args = dict(envelope.arguments)
         approval_id = raw_args.pop("approval_id", None)
@@ -217,17 +227,15 @@ class AtlasServer:
                 return cached
             self.metrics.cache_miss.labels(tool=envelope.tool).inc()
 
-        # 7. Circuit breaker around retried execution. Retries sit inside the breaker
-        # so one logical failure counts once toward opening it.
+        # 7. Circuit breaker around the budgeted, retried execution. Retries and the
+        # timeout sit inside the breaker so one logical failure counts once.
         breaker = self.breakers.for_tool(envelope.tool)
-        with self.metrics.latency.labels(tool=envelope.tool).time():
-            result = await breaker.call(
-                with_retry,
-                tool.execute,
-                envelope.tenant,
-                validated_args,
-                max_attempts=self.settings.retry_max_attempts,
-                base_delay_ms=self.settings.retry_base_delay_ms,
+        try:
+            with self.metrics.latency.labels(tool=envelope.tool).time():
+                result = await breaker.call(self._execute, tool, envelope.tenant, validated_args)
+        finally:
+            self.metrics.circuit_state.labels(tool=envelope.tool).set(
+                _CIRCUIT_GAUGE[breaker.state]
             )
 
         if tool.cacheable:
@@ -237,6 +245,26 @@ class AtlasServer:
 
         self.metrics.calls_total.labels(tool=envelope.tool, status="ok").inc()
         return result
+
+    async def _execute(self, tool, tenant: str, args) -> dict:
+        """Run the tool with retries, inside a timeout from the ATBA budget."""
+        try:
+            return await self.atba.call_with_budget(
+                tool.meta.name,
+                with_retry(
+                    tool.execute, tenant, args,
+                    max_attempts=self.settings.retry_max_attempts,
+                    base_delay_ms=self.settings.retry_base_delay_ms,
+                ),
+                cap_s=tool.meta.timeout_ms / 1000,
+            )
+        except TimeoutError as exc:
+            # An UpstreamError, so a backend that keeps timing out opens the breaker.
+            raise UpstreamError(
+                "timeout", retryable=True,
+                hint=f"{tool.meta.name} did not answer within its time budget",
+                context={"tool": tool.meta.name},
+            ) from exc
 
     async def _require_approval(
         self, envelope: ToolCallEnvelope, tool_name: str, args, approval_id: str | None
@@ -259,6 +287,49 @@ class AtlasServer:
         if approval.tool != tool_name or approval.arguments != payload:
             raise PolicyError("approval_mismatch", retryable=False,
                               hint="arguments differ from what was approved")
+
+    # ── Approval review (HTTP) ─────────────────────────────────────────────
+    def _reviewer(self, request: Request):
+        principal = request.state.principal
+        if APPROVAL_REVIEW_SCOPE not in principal.scopes:
+            raise PolicyError("missing_scope", retryable=False,
+                              hint=f"token lacks scope {APPROVAL_REVIEW_SCOPE}")
+        return principal, request.state.tenant
+
+    async def approval_detail(self, request: Request) -> JSONResponse:
+        """Show a reviewer exactly what they would be approving."""
+        try:
+            _principal, tenant = self._reviewer(request)
+            approval = await self.approvals.check(request.path_params["approval_id"], tenant)
+        except ToolError as exc:
+            return _error_response(exc)
+        return JSONResponse(asdict(approval))
+
+    async def approval_decide(self, request: Request) -> JSONResponse:
+        action = request.path_params["action"]
+        if action not in ("approve", "deny"):
+            return JSONResponse({"error": "unknown_action"}, status_code=404)
+        try:
+            principal, tenant = self._reviewer(request)
+            approval = await self.approvals.check(request.path_params["approval_id"], tenant)
+            if approval.caller == principal.subject:
+                raise PolicyError("self_approval", retryable=False,
+                                  hint="the caller that asked cannot approve its own request")
+            if approval.state != "pending":
+                raise PolicyError("approval_already_decided", retryable=False,
+                                  hint=f"approval is already {approval.state}")
+            decide = self.approvals.approve if action == "approve" else self.approvals.deny
+            approval = await decide(approval.id, principal.subject)
+        except ToolError as exc:
+            return _error_response(exc)
+        if self.audit is not None:
+            self.audit.record(
+                trace_id=None, tenant=tenant, caller=principal.subject,
+                delegator=principal.delegator, tool=f"approval.{action}",
+                arguments={"approval_id": approval.id, "tool": approval.tool},
+                duration_ms=0.0, status="ok",
+            )
+        return JSONResponse(asdict(approval))
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
     async def startup(self) -> None:
@@ -301,6 +372,14 @@ class AtlasServer:
             return bool(await self._redis.ping())
         except Exception:
             return False
+
+
+_STATUS_BY_CODE = {"approval_not_found": 404, "missing_scope": 403, "self_approval": 403,
+                   "approval_tenant_mismatch": 403, "approval_already_decided": 409}
+
+
+def _error_response(exc: ToolError) -> JSONResponse:
+    return JSONResponse(exc.to_dict(), status_code=_STATUS_BY_CODE.get(exc.code, 400))
 
 
 # ── HTTP transport (Streamable HTTP per MCP 2025-11) ──────────────────────
@@ -362,6 +441,9 @@ def build_http_app(server: AtlasServer) -> Starlette:
         Route("/readyz", endpoint=readyz),  # readiness probe: Redis reachable, tools loaded
         Route("/metrics", endpoint=metrics_endpoint_for(server.metrics)),
         Route("/mcp", endpoint=_MCPEndpoint(session_manager)),
+        # Human review of pending destructive calls. Needs the approval:review scope.
+        Route("/approvals/{approval_id}", endpoint=server.approval_detail, methods=["GET"]),
+        Route("/approvals/{approval_id}/{action}", endpoint=server.approval_decide, methods=["POST"]),
     ]
     return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
 

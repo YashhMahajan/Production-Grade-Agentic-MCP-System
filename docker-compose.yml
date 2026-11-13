@@ -1,143 +1,351 @@
-# Full Atlas-MCP stack for local development.
+# Full Atlas MCP stack.
 #
-#   docker compose up -d
+#   cp .env.example .env
+#   docker compose up -d --build --wait
+#   docker compose --profile seed run --rm seed        # demo data
+#   docker compose --profile copilot run --rm copilot "Why was the refund on order o_9002 for CUST-1001 delayed?"
 #
-# Brings up:
-#   - Atlas-MCP           :8080
-#   - Postgres            :5432   (atlas / atlas / atlas)
-#   - Elasticsearch       :9200
-#   - Redis               :6379
-#   - Qdrant              :6333
-#   - MinIO (S3)          :9000   (minioadmin / minioadmin)
-#   - OTel Collector      :4317
-#   - Jaeger UI           :16686
-#   - Prometheus          :9090
-#   - Grafana             :3000   (admin / admin)
+# Only these are reachable from the host, all on 127.0.0.1:
+#   8443   Caddy, the TLS edge for /mcp and /approvals
+#   8081   Keycloak (token endpoint)
+#   3000   Grafana    9090  Prometheus    16686  Jaeger
+# Postgres, Redis, Elasticsearch, Qdrant and MinIO sit on an internal network with
+# no route to the host. Reach them with `docker compose exec`.
+#
+# Every store requires credentials. The defaults below are for development only.
+
+name: atlas-mcp
+
+networks:
+  app: {}
+  data:
+    internal: true   # no route to or from the outside
 
 services:
+  # ── Edge ──────────────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports: [ "127.0.0.1:8443:8443" ]
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data            # keeps the local CA stable across restarts
+    networks: [ app ]
+    depends_on:
+      atlas-mcp: { condition: service_healthy }
+    read_only: true
+    tmpfs: [ /config ]
+    cap_drop: [ ALL ]
+    security_opt: [ "no-new-privileges:true" ]
+    mem_limit: 128m
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-check-certificate -q -O- https://localhost:8443/healthz" ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # ── Application ───────────────────────────────────────────────────────
+  # Gets only the settings it needs. The LLM keys in .env stay out of this container.
   atlas-mcp:
     build: .
     image: atlas-mcp:dev
     restart: unless-stopped
-    env_file: .env
-    ports: [ "8080:8080" ]
+    networks: [ app, data ]
+    environment:
+      ATLAS_TRANSPORT: http
+      ATLAS_HTTP_HOST: 0.0.0.0
+      ATLAS_HTTP_PORT: "8080"
+      ATLAS_STATELESS_MODE: "true"
+      ATLAS_AUTH_ISSUER: ${ATLAS_AUTH_ISSUER:-http://keycloak:8080/realms/atlas}
+      ATLAS_AUTH_AUDIENCE: ${ATLAS_AUTH_AUDIENCE:-atlas-mcp}
+      ATLAS_AUTH_JWKS_URL: ${ATLAS_AUTH_JWKS_URL:-http://keycloak:8080/realms/atlas/protocol/openid-connect/certs}
+      ATLAS_POLICY_DEFAULT_DENY: "true"
+      ATLAS_POLICY_FILE: config/policy.yaml
+      ATLAS_REDIS_URL: redis://:${REDIS_PASSWORD:-atlas-dev-redis}@redis:6379/0
+      ATLAS_OTEL_ENDPOINT: http://otel-collector:4317
+      ATLAS_AUDIT_LOG_PATH: /var/log/atlas/audit.jsonl
+      ATLAS_POSTGRES_DSN: ${ATLAS_POSTGRES_DSN:-postgresql://atlas_app:atlas_app@postgres:5432/atlas}
+      ATLAS_ELASTICSEARCH_URL: http://elasticsearch:9200
+      ATLAS_ELASTICSEARCH_PASSWORD: ${ATLAS_ELASTICSEARCH_PASSWORD:-atlas-dev-es}
+      ATLAS_VECTOR_DB_URL: http://qdrant:6333
+      ATLAS_VECTOR_DB_API_KEY: ${ATLAS_VECTOR_DB_API_KEY:-atlas-dev-qdrant}
+      ATLAS_S3_ENDPOINT: http://minio:9000
+      ATLAS_S3_BUCKET: atlas-mcp-data
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_DEFAULT_REGION: us-east-1
+      ATLAS_EMBEDDING_MODEL: ${ATLAS_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
+      ATLAS_RATE_LIMIT_DEFAULT_RPM: ${ATLAS_RATE_LIMIT_DEFAULT_RPM:-60}
+      ATLAS_RATE_LIMIT_BURST: ${ATLAS_RATE_LIMIT_BURST:-20}
+      ATLAS_RATE_LIMIT_PER_TOOL_OVERRIDES: ${ATLAS_RATE_LIMIT_PER_TOOL_OVERRIDES:-true}
+      ATLAS_CACHE_L1_TTL_SECONDS: ${ATLAS_CACHE_L1_TTL_SECONDS:-60}
+      ATLAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD: ${ATLAS_CIRCUIT_BREAKER_FAILURE_THRESHOLD:-5}
+      ATLAS_CIRCUIT_BREAKER_RECOVERY_SECONDS: ${ATLAS_CIRCUIT_BREAKER_RECOVERY_SECONDS:-30}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       elasticsearch: { condition: service_healthy }
-      qdrant: { condition: service_started }
-      minio: { condition: service_started }
+      qdrant: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
       otel-collector: { condition: service_started }
     volumes:
       - atlas-logs:/var/log/atlas
       - ./config:/app/config:ro
+    read_only: true
+    tmpfs: [ /tmp ]
+    cap_drop: [ ALL ]
+    security_opt: [ "no-new-privileges:true" ]
+    pids_limit: 256
+    mem_limit: 1536m
 
   # One-shot: loads demo tickets and documents into Elasticsearch and Qdrant.
-  #   docker compose run --rm seed
   seed:
     build: .
     image: atlas-mcp:dev
-    env_file: .env
+    profiles: [ seed ]
+    networks: [ data ]
     entrypoint: [ "python", "/seed/seed.py" ]
+    environment:
+      ATLAS_ELASTICSEARCH_URL: http://elasticsearch:9200
+      ATLAS_ELASTICSEARCH_PASSWORD: ${ATLAS_ELASTICSEARCH_PASSWORD:-atlas-dev-es}
+      ATLAS_VECTOR_DB_URL: http://qdrant:6333
+      ATLAS_VECTOR_DB_API_KEY: ${ATLAS_VECTOR_DB_API_KEY:-atlas-dev-qdrant}
+      ATLAS_EMBEDDING_MODEL: ${ATLAS_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
     volumes: [ "./deploy/seed:/seed:ro" ]
     depends_on:
       elasticsearch: { condition: service_healthy }
-      qdrant: { condition: service_started }
+      qdrant: { condition: service_healthy }
     restart: "no"
-    profiles: [ "seed" ]
 
+  # One-shot: the support copilot, run inside the stack so it needs no host TLS setup.
+  #   docker compose --profile copilot run --rm copilot "your question"
+  copilot:
+    build: .
+    image: atlas-mcp:dev
+    profiles: [ copilot ]
+    networks: [ app ]
+    entrypoint: [ "atlas-copilot" ]
+    environment:
+      ATLAS_MCP_URL: http://atlas-mcp:8080
+      ATLAS_TOKEN_URL: http://keycloak:8080/realms/atlas/protocol/openid-connect/token
+      ATLAS_CLIENT_ID: ${ATLAS_CLIENT_ID:-copilot-acme}
+      ATLAS_CLIENT_SECRET: ${ATLAS_CLIENT_SECRET:-dev-secret-copilot-acme}
+      ATLAS_TENANT: ${ATLAS_TENANT:-acme}
+      ATLAS_LLM_API_KEY: ${ATLAS_LLM_API_KEY:-}
+      ATLAS_LLM_MODEL: ${ATLAS_LLM_MODEL:-deepseek/deepseek-v4-flash:free}
+      ATLAS_LLM_BASE_URL: ${ATLAS_LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      ATLAS_LLM_FALLBACK: ${ATLAS_LLM_FALLBACK:-false}
+      ATLAS_LLM_GROQ_KEY: ${ATLAS_LLM_GROQ_KEY:-}
+    depends_on:
+      atlas-mcp: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    restart: "no"
+
+  # ── Identity ──────────────────────────────────────────────────────────
+  # start-dev: in-memory caches, plain HTTP. Fine for development; use `start` with
+  # TLS and a fixed hostname in production. The issuer is pinned to keycloak:8080 so
+  # tokens carry the same `iss` whether they were requested from the host or from
+  # inside the network.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    restart: unless-stopped
+    command: [ "start-dev", "--import-realm" ]
+    ports: [ "127.0.0.1:8081:8080" ]
+    networks: [ app, data ]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./deploy/keycloak/atlas-realm.json:/opt/keycloak/data/import/atlas-realm.json:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    mem_limit: 1g
+    healthcheck:
+      # The image has no curl; speak HTTP to the management port with bash.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          timeout 2 cat <&3 | grep -q '"status": "UP"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # ── Data stores (internal network only) ───────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    networks: [ data ]
     environment:
       POSTGRES_DB: atlas
       POSTGRES_USER: atlas
-      POSTGRES_PASSWORD: atlas
-    ports: [ "5432:5432" ]
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    mem_limit: 512m
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U atlas" ]
+      test: [ "CMD-SHELL", "pg_isready -U atlas -d atlas" ]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # No snapshots: everything in here is a cache, a rate-limit bucket or an approval
+  # with a TTL, and losing it on restart fails safe. volatile-lru evicts only keys
+  # that have a TTL, which is all of them.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports: [ "6379:6379" ]
+    networks: [ data ]
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:-atlas-dev-redis}
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - volatile-lru
+      - --save
+      - ""
+    mem_limit: 320m
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG" ]
       interval: 5s
       timeout: 3s
       retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-atlas-dev-redis}
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
     restart: unless-stopped
+    networks: [ data ]
     environment:
       discovery.type: single-node
-      xpack.security.enabled: "false"
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"   # inside the internal network
+      ELASTIC_PASSWORD: ${ATLAS_ELASTICSEARCH_PASSWORD:-atlas-dev-es}
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
-    ports: [ "9200:9200" ]
-    volumes: [ esdata:/usr/share/elasticsearch/data ]
+    volumes: [ "esdata:/usr/share/elasticsearch/data" ]
+    mem_limit: 1280m
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health | grep -E 'green|yellow'" ]
+      test: [ "CMD-SHELL", "curl -fsS -u elastic:$$ELASTIC_PASSWORD http://localhost:9200/_cluster/health | grep -E 'green|yellow'" ]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   qdrant:
     image: qdrant/qdrant:v1.11.0
     restart: unless-stopped
-    ports: [ "6333:6333" ]
-    volumes: [ qdata:/qdrant/storage ]
+    networks: [ data ]
+    environment:
+      QDRANT__SERVICE__API_KEY: ${ATLAS_VECTOR_DB_API_KEY:-atlas-dev-qdrant}
+    volumes: [ "qdata:/qdrant/storage" ]
+    mem_limit: 512m
+    healthcheck:
+      test: [ "CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   minio:
     image: minio/minio:RELEASE.2024-08-17T01-24-54Z
     restart: unless-stopped
+    networks: [ data ]
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports: [ "9000:9000", "9001:9001" ]
-    volumes: [ miniodata:/data ]
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes: [ "miniodata:/data" ]
+    mem_limit: 256m
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
+  # One-shot: create the bucket the S3 tools write to.
+  minio-init:
+    image: atlas-mcp:dev
+    build: .
+    networks: [ data ]
+    entrypoint: [ "python", "/init/init_bucket.py" ]
+    environment:
+      ATLAS_S3_ENDPOINT: http://minio:9000
+      ATLAS_S3_BUCKET: atlas-mcp-data
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_DEFAULT_REGION: us-east-1
+    volumes: [ "./deploy/minio:/init:ro" ]
+    depends_on:
+      minio: { condition: service_healthy }
+    restart: "no"
+
+  # ── Observability ─────────────────────────────────────────────────────
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.103.0
     restart: unless-stopped
     command: [ "--config=/etc/otel/config.yaml" ]
+    networks: [ app ]
     volumes:
       - ./deploy/otel/config.yaml:/etc/otel/config.yaml:ro
-    ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
     depends_on: [ jaeger ]
+    mem_limit: 256m
 
   jaeger:
     image: jaegertracing/all-in-one:1.58
     restart: unless-stopped
+    networks: [ app ]
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
-    ports:
-      - "16686:16686" # UI
+    ports: [ "127.0.0.1:16686:16686" ]
+    mem_limit: 256m
 
   prometheus:
     image: prom/prometheus:v2.53.0
     restart: unless-stopped
+    networks: [ app ]
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports: [ "9090:9090" ]
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: [ "127.0.0.1:9090:9090" ]
+    mem_limit: 512m
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:9090/-/ready" ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
   grafana:
     image: grafana/grafana:11.1.0
     restart: unless-stopped
+    networks: [ app ]
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-    ports: [ "3000:3000" ]
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: [ "127.0.0.1:3000:3000" ]
     depends_on: [ prometheus ]
+    mem_limit: 256m
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:3000/api/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
 volumes:
   pgdata: {}
@@ -145,3 +353,4 @@ volumes:
   qdata: {}
   miniodata: {}
   atlas-logs: {}
+  caddy-data: {}

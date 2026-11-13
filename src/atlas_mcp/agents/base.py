@@ -47,6 +47,9 @@ class LLM:
         self.api_key = api_key or os.environ.get("ATLAS_LLM_API_KEY", os.environ.get("OPENROUTER_API_KEY", ""))
         self.model = model or os.environ.get("ATLAS_LLM_MODEL", "deepseek/deepseek-v4-flash:free")
         self.base_url = os.environ.get("ATLAS_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+        # Fallback sends the same prompt, customer text included, to other providers.
+        # Off unless ATLAS_LLM_FALLBACK=true.
+        self.fallback = os.environ.get("ATLAS_LLM_FALLBACK", "false").lower() == "true"
 
     async def complete(
         self,
@@ -82,6 +85,9 @@ class LLM:
                 "base_url": "https://api.groq.com/openai/v1",
             }
         ]
+
+        if not self.fallback:
+            fallback_configs = fallback_configs[:1]
 
         # Deduplicate configs while preserving order
         seen = set()

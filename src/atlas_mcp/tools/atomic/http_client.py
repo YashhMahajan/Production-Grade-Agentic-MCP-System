@@ -13,6 +13,9 @@ HTTP. That is deliberately the safe default.
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import socket
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -93,6 +96,7 @@ class HTTPFetchTool(Tool):
                 context={"host": host},
             )
         #follow_redirects=False matters a lot. Without it, an allowlisted host could redirect to a non-allowlisted one, bypassing our check.
+        await _refuse_unsafe_addresses(host)
         try:
             async with httpx.AsyncClient(timeout=args.timeout_s, follow_redirects=False) as client:
                 resp = await client.request(
@@ -113,6 +117,28 @@ class HTTPFetchTool(Tool):
         }
 
 # By disabling redirects, we force the agent to see the 3xx response and make an explicit decision about where to go next.
+async def _refuse_unsafe_addresses(host: str) -> None:
+    """An allowlisted name must not resolve to this machine or a cloud metadata address.
+
+    RFC 1918 ranges stay reachable because the allowlist legitimately contains internal
+    names such as ``*.acme.internal``. The check runs before the request and the
+    request resolves again, so DNS that changes in between is not covered.
+    """
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+    except socket.gaierror as exc:
+        raise UpstreamError("http_dns_error", retryable=True, hint=str(exc)) from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+            raise PolicyError(
+                "host_resolves_to_unsafe_address",
+                retryable=False,
+                hint=f"{host!r} resolves to {ip}, which outbound fetches may not reach",
+                context={"host": host},
+            )
+
+
 def _load_allowlist() -> dict[str, list[str]]:
     import pathlib
     path = pathlib.Path("config/http_allowlist.yaml")

@@ -41,7 +41,11 @@ class ElasticsearchSearchTool(Tool):
 
     def _es(self) -> AsyncElasticsearch:
         if ElasticsearchSearchTool._client is None:
-            ElasticsearchSearchTool._client = AsyncElasticsearch(self.settings.elasticsearch_url)
+            auth = self.settings.elasticsearch_password
+            ElasticsearchSearchTool._client = AsyncElasticsearch(
+                self.settings.elasticsearch_url,
+                basic_auth=(self.settings.elasticsearch_user, auth) if auth else None,
+            )
         return ElasticsearchSearchTool._client
 
     async def run(self, tenant: str, args: ElasticsearchSearchInput) -> dict:  # type: ignore[override]

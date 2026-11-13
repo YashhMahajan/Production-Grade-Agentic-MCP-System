@@ -57,11 +57,13 @@ class AtlasMCPClient:
         bearer_token: str,
         tenant: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        verify: bool | str = True,
     ):
         self.base_url = base_url.rstrip("/")
         self.bearer_token = bearer_token
         self.tenant = tenant
         self._transport = transport  # tests pass an in-process ASGI transport
+        self._verify = verify  # False, or a CA bundle path for the edge proxy's local CA
         self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
 
@@ -74,7 +76,8 @@ class AtlasMCPClient:
         if self.tenant:
             headers["X-Tenant-Id"] = self.tenant
         self._client = httpx.AsyncClient(
-            base_url=self.base_url, headers=headers, timeout=30.0, transport=self._transport
+            base_url=self.base_url, headers=headers, timeout=30.0, transport=self._transport,
+            verify=self._verify,
         )
         await self._initialize()
         return self
@@ -173,6 +176,25 @@ def _decode_body(resp: httpx.Response) -> dict:
                 return json.loads(line[5:].strip())
         raise MCPError(code=-32000, message="event stream carried no data event")
     return resp.json()
+
+
+async def fetch_token(
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    *,
+    verify: bool | str = True,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """OAuth 2.1 client-credentials grant: the agent authenticates as itself."""
+    async with httpx.AsyncClient(timeout=15.0, verify=verify, transport=transport) as client:
+        resp = await client.post(
+            token_url,
+            data={"grant_type": "client_credentials", "client_id": client_id,
+                  "client_secret": client_secret},
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
 
 
 class MCPError(Exception):

@@ -20,6 +20,7 @@ from mcp.types import Tool as MCPToolSpec
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from atlas_mcp import __version__
 from atlas_mcp.errors.framework import ToolNotFoundError
 from atlas_mcp.tools.base import Tool
 
@@ -118,7 +119,7 @@ class ToolRegistry:
         return JSONResponse(
             {
                 "protocol_version": "2025-11",
-                "server": {"name": "atlas-mcp", "version": "0.2.0"},
+                "server": {"name": "atlas-mcp", "version": __version__},
                 "capabilities": {
                     "tools": {"list_changed": True},
                     "prompts": {},

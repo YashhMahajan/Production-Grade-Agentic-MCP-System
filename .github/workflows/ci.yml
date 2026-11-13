@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main, ship-ready]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast checks. Everything here runs on a laptop with no Docker.
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests deploy scripts
+      - run: pytest -q
+      - name: Request-overhead benchmark
+        run: |
+          python scripts/bench_pipeline.py 1000 | tee bench-pipeline.json
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("bench-pipeline.json"))
+          print("### Request overhead (backend faked)\n")
+          print(f"{d['machine']}, Python {d['python']}, {d['calls_per_scenario']} calls per row\n")
+          print("| scenario | p50 ms | p95 ms |\n|---|---|---|")
+          for k in ("healthz_no_auth", "tool_call_cache_miss", "tool_call_cache_hit"):
+              print(f"| {k} | {d[k]['p50']:.2f} | {d[k]['p95']:.2f} |")
+          PY
+      - uses: actions/upload-artifact@v4
+        with: { name: bench-pipeline, path: bench-pipeline.json }
+
+  # Static checks of everything in deploy/ that does not need a running stack.
+  validate-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - name: Compose file resolves
+        run: docker compose config --quiet
+      - name: Prometheus rules parse and their unit tests pass
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/deploy/prometheus:/p:ro" prom/prometheus:v2.53.0 check config /p/prometheus.yml || true
+          docker run --rm --entrypoint promtool -v "$PWD/deploy/prometheus:/p:ro" prom/prometheus:v2.53.0 check rules /p/alerts.yml
+          docker run --rm --entrypoint promtool -v "$PWD/deploy/prometheus:/p:ro" prom/prometheus:v2.53.0 test rules /p/alerts_test.yml
+      - name: Caddyfile is valid
+        run: docker run --rm -v "$PWD/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.8-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Realm and dashboard are valid JSON
+        run: |
+          python3 -c "import json;json.load(open('deploy/keycloak/atlas-realm.json'));json.load(open('deploy/grafana/dashboards/atlas.json'))"
+      - name: Dockerfile lint
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 hadolint --failure-threshold error - < Dockerfile
+
+  # The real thing: build the image, start all services, seed, run the end-to-end
+  # tests, then measure against real backends.
+  stack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: cp .env.example .env
+
+      - name: Build
+        run: docker compose build
+
+      - name: Start every service and wait for health
+        run: docker compose up -d --wait --wait-timeout 900
+
+      - name: Service status
+        run: docker compose ps
+
+      - name: Seed demo data
+        run: docker compose --profile seed run --rm seed
+
+      - name: End-to-end tests
+        run: ATLAS_E2E=1 pytest tests/e2e -v --junitxml=e2e-results.xml
+
+      - name: Raise rate limits so the benchmark measures the stack, not the limiter
+        run: |
+          ATLAS_RATE_LIMIT_DEFAULT_RPM=600000 ATLAS_RATE_LIMIT_BURST=100000 \
+          ATLAS_RATE_LIMIT_PER_TOOL_OVERRIDES=false \
+          docker compose up -d --wait --wait-timeout 300 atlas-mcp
+
+      - name: Benchmark with real backends
+        run: |
+          python scripts/bench_stack.py 200 10 | tee bench-stack.json
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("bench-stack.json"))
+          print("### Real stack, through the TLS edge\n")
+          print(f"{d['machine']}, {d['cpus']} CPUs (shared runner), {d['calls_per_scenario']} calls per row\n")
+          print("| tool | miss p50 | miss p95 | hit p50 | hit p95 | cache speedup (p50) |\n|---|---|---|---|---|---|")
+          for t in ("postgres.query", "customer.build_context", "semantic_search"):
+              r = d[t]
+              print(f"| {t} | {r['cache_miss']['p50_ms']} | {r['cache_miss']['p95_ms']} | {r['cache_hit']['p50_ms']} | {r['cache_hit']['p95_ms']} | {r['cache_speedup_p50']}x |")
+          print("\n| concurrent run | workers | req/s | p50 ms | p95 ms | errors |\n|---|---|---|---|---|---|")
+          for k in ("concurrent_cache_hits", "concurrent_cache_misses"):
+              r = d[k]
+              print(f"| {k} | {r['workers']} | {r['requests_per_second']} | {r['p50_ms']} | {r['p95_ms']} | {r['errors']} |")
+          print(f"\nToken fetch from Keycloak, p50: {d['token_fetch_p50_ms']} ms")
+          PY
+
+      - name: Memory use per service after the run
+        run: |
+          docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}" | tee docker-stats.txt
+          { echo '### Memory and CPU per container'; echo; echo '```'; cat docker-stats.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          docker images atlas-mcp:dev --format "Image atlas-mcp:dev is {{.Size}}" | tee -a docker-stats.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 300 > compose-logs.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stack-results
+          path: |
+            e2e-results.xml
+            bench-stack.json
+            docker-stats.txt
+            compose-logs.txt
+          if-no-files-found: ignore
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile seed --profile copilot down -v
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Known vulnerabilities in Python dependencies
+        run: |
+          pip install -e . pip-audit
+          pip-audit --skip-editable
+      - name: Dockerfile misconfiguration
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Build the image
+        run: docker build -t atlas-mcp:scan .
+      - name: Image vulnerabilities (fail on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: atlas-mcp:scan
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
