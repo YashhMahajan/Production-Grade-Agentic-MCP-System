@@ -183,10 +183,6 @@ jobs:
           for row in rows:
               print(" | ".join(row))
           PY
-      - name: Every setuptools in the image (diagnostic)
-        run: |
-          docker run --rm --entrypoint sh scout-mcp:scan -c \
-            'find / -xdev -iname "*setuptools*" -not -path "/proc/*" 2>/dev/null | grep -v "/setuptools/" | head -40; echo ---; pip list 2>/dev/null | grep -iE "setuptools|wheel|pip "; echo ---; find / -xdev -name "METADATA" -path "*70.3.0*" 2>/dev/null | head'
       - name: Image vulnerabilities (fail on any HIGH or CRITICAL that has a fix)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \

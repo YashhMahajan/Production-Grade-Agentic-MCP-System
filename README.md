@@ -2,7 +2,7 @@
 
 I built Scout MCP to see what it takes to put an MCP server in front of real company data and not regret it later. It is one server that gives AI agents controlled access to Postgres, Elasticsearch, a vector database and S3, plus a four-agent support copilot that uses it. Everything runs from one `docker compose up`.
 
-I started from Fareed Khan's article [Building the 11 Layers of a Production-Grade MCP Server + Agentic System](https://levelup.gitconnected.com/building-the-11-layers-of-a-production-grade-mcp-server-agentic-system-de92127aca6f). It gave me the module layout and the twelve concerns. When I ran the code from the article, most of the request path did not work, so a large part of this repo is the fixing: [docs/ISSUES.md](docs/ISSUES.md) lists every defect I found and the test that now guards it.
+[docs/ISSUES.md](docs/ISSUES.md) lists every defect I found and fixed while getting it to run, with the test that now guards each one.
 
 ## What it does
 
@@ -20,7 +20,7 @@ You need Docker with Compose v2 and about 6 GB of free memory.
 
 ```bash
 cp .env.example .env
-docker compose up -d --build --wait          # builds the image, starts 14 services
+docker compose up -d --build --wait          # builds the image, starts 12 services and a one-time bucket setup
 docker compose --profile seed run --rm seed  # loads demo tickets and documents
 ```
 
@@ -79,7 +79,20 @@ Inside the server each call goes through validation, scope and policy checks, ra
 
 ## Numbers
 
-<!-- NUMBERS -->
+Measured in CI on a shared 4-vCPU GitHub runner, three runs, through the TLS edge with real backends. The same row moves by up to about 40% between runs, so these are ranges. [docs/PERFORMANCE.md](docs/PERFORMANCE.md) has the full tables, the method and what I have not measured.
+
+| What | Result |
+|------|--------|
+| Cached tool call | 5 to 7 ms at p50 |
+| `customer.build_context` (two Postgres queries, Elasticsearch, embedding, Qdrant) | 45 to 55 ms on a miss, 5 to 8 ms on a hit, 6.7 to 8.3x faster |
+| `semantic_search` | 36 to 45 ms on a miss, 5 to 7 ms on a hit, 6.2 to 7.2x faster |
+| 16 concurrent clients | 134 to 199 requests/s, no errors in any run |
+| Whole stack memory | 2.2 to 2.3 GiB across 12 containers |
+| Request overhead with the backend faked, Apple M2 | 2.7 ms at p50, 3.3 to 3.9 ms at p95 |
+| Container image | 1.06 GB, 0 fixable HIGH or CRITICAL vulnerabilities (was 4) |
+| Python environment without PyTorch | 463 MB, down from 1.2 GB |
+
+A cache hit costs about the same whatever the tool, because the floor is TLS, token verification and the MCP session. The cache saves the backend work, so it matters most for composed tools.
 
 ## Develop without Docker
 
@@ -93,7 +106,7 @@ mcpvenv/bin/python scripts/bench_pipeline.py     # request overhead, backend fak
 
 The tests run the real server, middleware, policy file and tool registry in one process, with Redis, the embedding model and token validation replaced. The end-to-end tests in `tests/e2e` need the running stack and skip themselves otherwise.
 
-GitHub Actions runs four jobs on every push: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 29 end-to-end tests and the benchmark, and dependency and image scans.
+GitHub Actions runs four jobs on every push: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 31 end-to-end tests and the benchmark, and dependency and image scans.
 
 ## Before you put this in front of real data
 

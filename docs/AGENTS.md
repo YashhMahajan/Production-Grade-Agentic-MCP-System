@@ -54,10 +54,10 @@ python scripts/bench_stack.py 200 10
 
 | Job | What it proves |
 |-----|----------------|
-| `test` | Lint, 74 tests, request-overhead benchmark |
+| `test` | Lint, 76 tests, request-overhead benchmark |
 | `validate-deploy` | Compose resolves, Prometheus rules parse and pass their unit tests, Caddyfile validates, realm and dashboard are valid JSON, Dockerfile lint |
-| `stack` | Image builds, every service gets healthy, demo data loads, the end-to-end tests pass, then the real-backend benchmark and a memory snapshot |
-| `security` | `pip-audit` on dependencies, Trivy on the Dockerfile and the built image |
+| `stack` | Image builds, every service gets healthy, demo data loads, 31 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
+| `security` | `pip-audit` on dependencies, Trivy on the Dockerfile, and Trivy on the built image, which fails on any fixable HIGH or CRITICAL finding |
 
 To see why a run failed without waiting for the artifact: `gh run view <id> --log-failed`, or the job log through `gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`.
 
