@@ -32,6 +32,13 @@ class Plan:
 _CUSTOMER_ID_RE = re.compile(r"\b(?:cust|customer|acct|account)[_-][A-Za-z0-9]{2,60}\b", re.IGNORECASE)
 
 
+def _priority(value) -> int:
+    try:
+        return min(3, max(1, int(value)))
+    except (TypeError, ValueError):
+        return 2
+
+
 class PlannerAgent(Agent):
     name = "planner"
     system_prompt = PLANNER_SYSTEM
@@ -49,9 +56,10 @@ class PlannerAgent(Agent):
             max_tokens=400,
         )
         return Plan(
-            needs=[PlanStep(id=n["id"], description=n["description"],
-                            priority=int(n.get("priority", 2)))
-                   for n in data.get("needs", [])],
+            needs=[PlanStep(id=str(n.get("id") or f"n{i}"), description=str(n["description"]),
+                            priority=_priority(n.get("priority")))
+                   for i, n in enumerate(data.get("needs") or [], start=1)
+                   if isinstance(n, dict) and n.get("description")],
             customer_id_required=bool(data.get("customer_id_required")),
             notes=str(data.get("notes", "")),
             customer_id=customer_id,

@@ -22,7 +22,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from scout_mcp.agents.base import Agent, AgentRun
+from scout_mcp.agents.base import Agent, AgentOutputError, AgentRun, BudgetExceeded
 from scout_mcp.agents.mcp_client import ScoutMCPClient, ToolResult
 from scout_mcp.agents.planner import Plan
 from scout_mcp.agents.prompts import RETRIEVER_SYSTEM
@@ -75,7 +75,15 @@ class RetrieverAgent(Agent):
 
         for i in range(1, self.max_iterations + 1):
             result.iterations_used = i
-            decision = await self._complete_json(run, messages, max_tokens=800)
+            try:
+                decision = await self._complete_json(run, messages, max_tokens=800)
+            except AgentOutputError:
+                messages.append({"role": "user", "content": "Your last reply was not valid JSON. "
+                                 "Reply with one JSON object: a tool call or {\"done\": true, ...}."})
+                continue
+            except BudgetExceeded:
+                result.exceeded_budget = True
+                break
 
             if decision.get("done"):
                 for f in decision.get("findings", []):
@@ -87,7 +95,9 @@ class RetrieverAgent(Agent):
 
             # Otherwise we expect a tool call instruction.
             tool_name = decision.get("tool")
-            arguments = decision.get("arguments") or {}
+            arguments = decision.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = {}
             if not tool_name:
                 messages.append({"role": "assistant", "content": json.dumps(decision)})
                 messages.append({
@@ -104,15 +114,22 @@ class RetrieverAgent(Agent):
                     hint=f"{tool_name!r} is not in the retriever's allow-list",
                 ).as_agent_observation()
             else:
+                try:
+                    run.check()
+                except BudgetExceeded:
+                    result.exceeded_budget = True
+                    break
                 run.tool_calls += 1
-                tool_result = await self.mcp.call_tool(tool_name, arguments)
-                # Keep the raw result for synthesis; emit a compact view to the LLM.
+                tool_result = await self.mcp.call_tool(
+                    tool_name, arguments, deadline_ms=run.remaining_ms()
+                )
+                # Keep the raw result for synthesis; the model sees a bounded, marked view.
                 findings_accum.append(Finding(
                     source=tool_name,
-                    summary=_summarise_result(tool_result, max_chars=500),
+                    summary=tool_result.as_agent_observation(max_chars=FINDING_CHARS),
                     raw=tool_result.value,
                 ))
-                observation = tool_result.as_agent_observation()
+                observation = tool_result.as_agent_observation(max_chars=OBSERVATION_CHARS)
 
             messages.append({"role": "assistant", "content": json.dumps(decision)})
             messages.append({
@@ -146,6 +163,7 @@ class RetrieverAgent(Agent):
         lines.append("Available tools:")
         for t in tool_specs:
             lines.append(f"- {t['name']}: {t.get('description', '')}")
+            lines.append(f"    arguments: {_describe_args(t)}")
         lines.append("")
         lines.append(
             "Respond with EITHER "
@@ -157,8 +175,18 @@ class RetrieverAgent(Agent):
         return "\n".join(lines)
 
 
-def _summarise_result(result: ToolResult, max_chars: int) -> str:
-    text = result.as_agent_observation()
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + "… (truncated)"
+# What one tool result may take up: in the model's running conversation, and as the
+# finding the synthesizer and critic read later.
+OBSERVATION_CHARS = 6000
+FINDING_CHARS = 1500
+
+
+def _describe_args(spec: dict) -> str:
+    """One line per tool: argument names, types, and which are required (*)."""
+    schema = spec.get("inputSchema") or {}
+    required = set(schema.get("required") or [])
+    parts = []
+    for name, prop in (schema.get("properties") or {}).items():
+        kind = prop.get("type") or ("enum" if "enum" in prop else "any")
+        parts.append(f"{name}{'*' if name in required else ''}: {kind}")
+    return ", ".join(parts) or "none"

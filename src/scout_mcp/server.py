@@ -69,6 +69,19 @@ _STDIO_SCOPES = frozenset({"tool:*:admin"})
 
 _CIRCUIT_GAUGE = {State.CLOSED: 0, State.HALF_OPEN: 1, State.OPEN: 2}
 
+# How long the calling agent says it has left, in milliseconds.
+DEADLINE_HEADER = "x-scout-deadline-ms"
+
+
+def _deadline_ms(value: str | None) -> int | None:
+    """A positive whole number, or None. A caller cannot widen the server's own budget."""
+    try:
+        ms = int(value) if value is not None else None
+    except ValueError:
+        return None
+    return ms if ms is not None and ms > 0 else None
+
+
 # Scope that lets a human review pending approvals.
 APPROVAL_REVIEW_SCOPE = "approval:review"
 
@@ -82,6 +95,8 @@ class CallContext:
     scopes: frozenset[str]
     roles: frozenset[str]
     delegator: str | None = None
+    # Milliseconds the caller said it has left. The server never works past it.
+    deadline_ms: int | None = None
 
 
 class ScoutServer:
@@ -130,6 +145,7 @@ class ScoutServer:
             scopes=principal.scopes,
             roles=principal.roles,
             delegator=principal.delegator,
+            deadline_ms=_deadline_ms(request.headers.get(DEADLINE_HEADER)),
         )
 
     # ── MCP protocol handlers ──────────────────────────────────────────────
@@ -151,6 +167,7 @@ class ScoutServer:
                     delegator=ctx.delegator,
                     scopes=ctx.scopes,
                     roles=ctx.roles,
+                    deadline_ms=ctx.deadline_ms,
                 )
                 return await self._dispatch(envelope)
             except ToolError as exc:
@@ -196,7 +213,8 @@ class ScoutServer:
 
     async def _run_pipeline(self, envelope: ToolCallEnvelope) -> dict:
         tool = self.registry.get(envelope.tool)
-        self.atba.begin()  # a fresh time budget for this call
+        # A fresh time budget for this call, cut to what the caller has left.
+        self.atba.begin(envelope.deadline_ms)
         # 5. Validate. The approval id is not a tool argument, so lift it out first.
         raw_args = dict(envelope.arguments)
         approval_id = raw_args.pop("approval_id", None)

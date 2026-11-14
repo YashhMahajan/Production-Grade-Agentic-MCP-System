@@ -17,12 +17,31 @@ does not require a client code change.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import secrets
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+
+# Longest the client will sleep for a rate limit before handing the error to the agent.
+MAX_RATE_LIMIT_WAIT_S = 5.0
+# Header carrying how long the agent's run has left, so the server never works past it.
+DEADLINE_HEADER = "X-Scout-Deadline-Ms"
+
+
+def wrap_untrusted(text: str) -> str:
+    """Mark text that came from a data store as data, not as instructions.
+
+    Ticket subjects, documents and fetched pages are written by customers and third
+    parties. The tag carries a random id that is new for every call, so text inside
+    the data cannot close the block early and pose as the prompt that follows it.
+    """
+    tag = secrets.token_hex(6)
+    return f"<tool_data id={tag}>\n{text}\n</tool_data id={tag}>"
 
 
 @dataclass(slots=True)
@@ -32,9 +51,10 @@ class ToolResult:
     error_code: str | None = None
     retryable: bool = False
     hint: str | None = None
+    context: dict | None = None
 
-    def as_agent_observation(self) -> str:
-        """Render as text for inclusion in an LLM prompt."""
+    def render(self) -> str:
+        """The result as JSON text, before it is marked as data."""
         if self.ok:
             return json.dumps({"ok": True, "result": self.value}, default=str, indent=2)
         return json.dumps(
@@ -46,6 +66,13 @@ class ToolResult:
             },
             indent=2,
         )
+
+    def as_agent_observation(self, max_chars: int | None = None) -> str:
+        """Render for an LLM prompt, cut to ``max_chars`` and marked as data."""
+        text = self.render()
+        if max_chars is not None and len(text) > max_chars:
+            text = text[:max_chars] + "... (truncated)"
+        return wrap_untrusted(text)
 
 
 class ScoutMCPClient:
@@ -105,10 +132,29 @@ class ScoutMCPClient:
         resp = await self._rpc("tools/list", {})
         return resp.get("tools", [])
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], deadline_ms: int | None = None
+    ) -> ToolResult:
+        """Call a tool. A rate-limit answer is waited out once, for as long as the server
+        says and no longer than the run has left; every other error goes to the agent."""
+        result = await self._call_once(name, arguments, deadline_ms)
+        if not result.ok and result.error_code == "rate_limited":
+            wait = float((result.context or {}).get("retry_after_seconds") or 1.0)
+            fits = deadline_ms is None or wait * 1000 < deadline_ms
+            if wait <= MAX_RATE_LIMIT_WAIT_S and fits:
+                await asyncio.sleep(wait)
+                result = await self._call_once(
+                    name, arguments, None if deadline_ms is None else deadline_ms - int(wait * 1000)
+                )
+        return result
+
+    async def _call_once(
+        self, name: str, arguments: dict[str, Any], deadline_ms: int | None
+    ) -> ToolResult:
         try:
             resp = await self._rpc(
-                "tools/call", {"name": name, "arguments": arguments}
+                "tools/call", {"name": name, "arguments": arguments},
+                headers={DEADLINE_HEADER: str(max(deadline_ms, 1))} if deadline_ms else None,
             )
         except MCPError as exc:
             data = exc.data or {}
@@ -117,6 +163,7 @@ class ScoutMCPClient:
                 error_code=data.get("code") or str(exc.code),
                 retryable=bool(data.get("retryable")),
                 hint=data.get("hint") or exc.message,
+                context=data.get("context"),
             )
         # MCP wraps results in ``content`` blocks; flatten for agent use.
         content = resp.get("content") or []
@@ -135,11 +182,12 @@ class ScoutMCPClient:
                 error_code=data.get("code") or "tool_error",
                 retryable=bool(data.get("retryable")),
                 hint=data.get("hint"),
+                context=data.get("context"),
             )
         return ToolResult(ok=True, value=value)
 
     # ── Low-level RPC ─────────────────────────────────────────────────────
-    async def _rpc(self, method: str, params: dict) -> dict:
+    async def _rpc(self, method: str, params: dict, headers: dict | None = None) -> dict:
         assert self._client is not None, "use `async with ScoutMCPClient(...)`"
         request = {
             "jsonrpc": "2.0",
@@ -147,7 +195,7 @@ class ScoutMCPClient:
             "method": method,
             "params": params,
         }
-        resp = await self._post(request)
+        resp = await self._post(request, headers)
         body = _decode_body(resp)
         if "error" in body:
             err = body["error"]
@@ -159,9 +207,10 @@ class ScoutMCPClient:
         """Send a JSON-RPC notification: no id, and the server answers 202 with no body."""
         await self._post({"jsonrpc": "2.0", "method": method})
 
-    async def _post(self, payload: dict) -> httpx.Response:
+    async def _post(self, payload: dict, extra: dict | None = None) -> httpx.Response:
         assert self._client is not None, "use `async with ScoutMCPClient(...)`"
         headers = {"Mcp-Session-Id": self._session_id} if self._session_id else {}
+        headers.update(extra or {})
         resp = await self._client.post("/mcp", json=payload, headers=headers)
         resp.raise_for_status()
         self._session_id = resp.headers.get("mcp-session-id", self._session_id)

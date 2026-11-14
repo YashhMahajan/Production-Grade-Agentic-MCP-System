@@ -29,6 +29,8 @@ class BudgetContext:
     started_at: float
     calls_made: int = 0
     spent_s: float = 0.0
+    # True when the caller named a deadline: then no call may run past it.
+    deadline_bound: bool = False
 
     @property
     def remaining_s(self) -> float:
@@ -70,9 +72,14 @@ class ATBA:
         self.total_budget_s = total_budget_ms / 1000.0
         self.tracker = LatencyTracker()
 
-    def begin(self) -> BudgetContext:
+    def begin(self, deadline_ms: int | None = None) -> BudgetContext:
+        """Start a budget. ``deadline_ms`` (what the caller has left) can only shorten it."""
+        total = self.total_budget_s
+        if deadline_ms is not None:
+            total = min(total, deadline_ms / 1000.0)
         ctx = BudgetContext(
-            total_budget_s=self.total_budget_s, started_at=time.monotonic()
+            total_budget_s=total, started_at=time.monotonic(),
+            deadline_bound=deadline_ms is not None,
         )
         _current_budget.set(ctx)
         return ctx
@@ -102,6 +109,9 @@ class ATBA:
         if cap_s is not None:
             timeout = min(timeout, cap_s)
         ctx = _current_budget.get()
+        if ctx is not None and ctx.deadline_bound:
+            # The floor on a call's timeout does not apply when the caller is out of time.
+            timeout = min(timeout, max(ctx.remaining_s, 0.001))
         if ctx is not None:
             ctx.calls_made += 1
 

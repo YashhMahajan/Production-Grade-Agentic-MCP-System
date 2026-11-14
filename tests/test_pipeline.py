@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 
 from scout_mcp.agents.mcp_client import ScoutMCPClient
+from scout_mcp.errors.framework import PolicyError
 from scout_mcp.tools.atomic.postgres import PostgresQueryTool
 from scout_mcp.tools.atomic.s3_storage import S3PutTool
 from tests.conftest import call, rpc
@@ -82,11 +84,19 @@ async def test_policy_file_allows_a_normal_select(app_client, monkeypatch):
 
 
 async def test_policy_file_denies_banned_keywords(app_client, monkeypatch):
+    # The policy rule itself: it reads the SQL text, whatever the tool's own checks do.
+    policy = app_client.server.registry.get("postgres.query").policy
+    with pytest.raises(PolicyError) as err:
+        policy.check(("agent:test", "role:support_copilot"), "acme", "tool:postgres:read",
+                     "orders", {"sql": "SELECT id FROM orders WHERE note = 'drop'", "columns": []})
+    assert err.value.code == "denied_by_policy"
+
+    # Through the server the call is refused too, by the tool's keyword check or the policy.
     monkeypatch.setattr(PostgresQueryTool, "run", fake_pg([]))
     is_error, payload = await call(
         app_client, "postgres.query", {"sql": "SELECT id FROM orders WHERE note = 'drop'"}
     )
-    assert is_error and payload["code"] == "denied_by_policy"
+    assert is_error and payload["code"] in ("denied_by_policy", "invalid_arguments")
 
 
 async def test_policy_file_denies_pii_columns_to_support_agents(app_client, monkeypatch):

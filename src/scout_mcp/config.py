@@ -25,7 +25,7 @@ class ServerSettings(BaseSettings):
     stateless_mode: bool = True
     # Browser origins allowed to call /mcp. Empty means no browser origin is allowed;
     # clients that send no Origin header (agents, CLIs, SDKs) are never affected.
-    allowed_origins: list[str] = []
+    allowed_origins: tuple[str, ...] = ()
     # The address clients use to reach this server, for the protected-resource
     # metadata. Unset means "work it out from the request".
     public_url: str | None = None

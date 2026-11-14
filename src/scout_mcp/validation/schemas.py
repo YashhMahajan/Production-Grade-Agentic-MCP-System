@@ -39,3 +39,4 @@ class ToolCallEnvelope:
     # What the token grants. Authorization re-checks these on every call.
     scopes: frozenset[str] = frozenset()
     roles: frozenset[str] = frozenset()
+    deadline_ms: int | None = None

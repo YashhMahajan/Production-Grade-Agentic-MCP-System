@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -25,14 +26,45 @@ import structlog
 log = structlog.get_logger("scout.agents")
 
 
+class BudgetExceeded(Exception):
+    """The run used up its token budget or its time. ``reason`` says which."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+class AgentOutputError(ValueError):
+    """The model's reply was not the JSON object the agent asked for, even after a retry."""
+
+
 @dataclass
 class AgentRun:
-    """Per-turn accounting, shared across all agents in one user interaction."""
+    """Per-turn accounting, shared across all agents in one user interaction.
+
+    ``max_tokens`` and ``timeout_s`` are limits, not hints: ``check()`` runs before
+    every model call and tool call and raises :class:`BudgetExceeded`.
+    """
 
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     tokens_in: int = 0
     tokens_out: int = 0
     tool_calls: int = 0
+    max_tokens: int | None = None
+    timeout_s: float | None = None
+    started: float = field(default_factory=time.monotonic)
+
+    def check(self) -> None:
+        if self.max_tokens is not None and self.tokens_in + self.tokens_out >= self.max_tokens:
+            raise BudgetExceeded("token_budget")
+        if self.timeout_s is not None and self.remaining_ms() <= 0:
+            raise BudgetExceeded("time_budget")
+
+    def remaining_ms(self) -> int | None:
+        """Milliseconds left, or None when the run has no time limit."""
+        if self.timeout_s is None:
+            return None
+        return int((self.timeout_s - (time.monotonic() - self.started)) * 1000)
 
 
 class LLM:
@@ -148,8 +180,10 @@ class Agent(ABC):
 
     # ── Convenience helpers ───────────────────────────────────────────────
     async def _complete_json(
-        self, run: AgentRun, messages: list[dict], max_tokens: int = 512
+        self, run: AgentRun, messages: list[dict], max_tokens: int = 512, repair: bool = True
     ) -> dict:
+        """Ask for a JSON object. One reply that is not JSON gets one repair attempt."""
+        run.check()
         resp = await self.llm.complete(self.system_prompt, messages, max_tokens=max_tokens)
         usage = resp.get("usage", {})
         run.tokens_in += usage.get("prompt_tokens", 0)
@@ -157,11 +191,23 @@ class Agent(ABC):
         text = _first_text_block(resp)
         log.debug("agent_response", agent=self.name, run_id=run.run_id,
                   tokens_in=usage.get("prompt_tokens"), tokens_out=usage.get("completion_tokens"))
-        return _parse_json_lenient(text)
+        try:
+            return _parse_json_lenient(text)
+        except ValueError as exc:
+            if not repair:
+                raise AgentOutputError(f"{self.name} did not return JSON: {text[:120]!r}") from exc
+            log.warning("agent_json_repair", agent=self.name, run_id=run.run_id)
+            retry = messages + [
+                {"role": "assistant", "content": text[:2000]},
+                {"role": "user", "content": "That was not a single valid JSON object. "
+                                            "Reply with only the JSON object, nothing else."},
+            ]
+            return await self._complete_json(run, retry, max_tokens, repair=False)
 
     async def _complete_text(
         self, run: AgentRun, messages: list[dict], max_tokens: int = 512
     ) -> str:
+        run.check()
         resp = await self.llm.complete(self.system_prompt, messages, max_tokens=max_tokens)
         usage = resp.get("usage", {})
         run.tokens_in += usage.get("prompt_tokens", 0)
