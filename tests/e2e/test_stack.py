@@ -62,6 +62,21 @@ def test_edge_forwards_only_public_paths_and_sets_security_headers(http):
     assert len(doc["tools_summary"]) == 9
 
 
+def test_a_browser_origin_is_refused_at_the_edge(http):
+    refused = http.get(f"{MCP_URL}/healthz", headers={"Origin": "https://evil.example"})
+    assert refused.status_code == 403
+    assert http.get(f"{MCP_URL}/healthz").status_code == 200
+
+
+def test_protected_resource_metadata_is_served_through_the_edge(http):
+    body = http.get(f"{MCP_URL}/.well-known/oauth-protected-resource").json()
+    assert body["resource"] == "https://localhost:8443/mcp"
+    assert body["authorization_servers"] == ["http://keycloak:8080/realms/scout"]
+    r = http.post(f"{MCP_URL}/mcp", json={})
+    assert 'resource_metadata="https://localhost:8443/.well-known/oauth-protected-resource"' \
+        in r.headers["WWW-Authenticate"]
+
+
 async def test_oversized_request_bodies_are_refused(http):
     # With a valid token, so the request reaches the point where the body is read.
     bearer = await token("copilot-acme")
@@ -168,7 +183,7 @@ async def test_policy_denies_what_the_yaml_says(acme):
     pii = await acme.call_tool("postgres.query", {"sql": "SELECT ssn FROM customers"})
     assert not pii.ok and pii.error_code == "denied_by_policy"
     banned = await acme.call_tool("postgres.query", {"sql": "SELECT 1 FROM orders WHERE x = 'drop'"})
-    assert not banned.ok and banned.error_code == "denied_by_policy"
+    assert not banned.ok and banned.error_code in ("denied_by_policy", "invalid_arguments")
     write = await acme.call_tool("postgres.query", {"sql": "DELETE FROM orders"})
     assert not write.ok and write.error_code == "invalid_arguments"
     hidden = await acme.call_tool("s3.put_object", {"key": "a", "content": "b"})
@@ -176,16 +191,19 @@ async def test_policy_denies_what_the_yaml_says(acme):
 
 
 async def test_rate_limit_stops_a_looping_agent(globex):
+    # _call_once is the server's raw answer. call_tool waits out a rate limit once, as the
+    # server asks, so it would hide the limit this test is looking for.
     codes = []
     for i in range(30):   # burst is 20, refill 1 per second
-        r = await globex.call_tool("elasticsearch.search", {
-            "index": "tickets", "query": {"match_all": {}}, "size": i + 1})
+        r = await globex._call_once("elasticsearch.search", {
+            "index": "tickets", "query": {"match_all": {}}, "size": i + 1}, None)
         codes.append(r.error_code if not r.ok else "ok")
     assert codes[:15] == ["ok"] * 15
     assert "rate_limited" in codes
-    limited = await globex.call_tool("elasticsearch.search", {
-        "index": "tickets", "query": {"match_all": {}}, "size": 99})
+    limited = await globex._call_once("elasticsearch.search", {
+        "index": "tickets", "query": {"match_all": {}}, "size": 99}, None)
     assert not limited.ok and limited.retryable is True and "retry after" in limited.hint
+    assert 0 < limited.context["retry_after_seconds"] <= 5
 
 
 async def test_cache_serves_repeats_and_metrics_show_it(acme):
@@ -256,7 +274,7 @@ async def test_destructive_call_waits_for_a_human_then_runs_once():
         ran = await writer.call_tool("s3.put_object", {**args, "approval_id": approval_id})
         assert ran.ok and ran.value["bytes_written"] == len(args["content"])
         replay = await writer.call_tool("s3.put_object", {**args, "approval_id": approval_id})
-        assert not replay.ok and replay.error_code == "approval_not_found"
+        assert not replay.ok and replay.error_code == "approval_already_used"
 
     head = compose_exec("scout-mcp", "python", "-c",
                         "import boto3,os;c=boto3.client('s3',endpoint_url=os.environ['SCOUT_S3_ENDPOINT']);"

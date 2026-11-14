@@ -12,6 +12,7 @@ import pytest
 from scout_mcp import __version__
 from scout_mcp.agents import base
 from scout_mcp.agents.mcp_client import fetch_token
+from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.errors.framework import PolicyError
 from scout_mcp.tools.atomic import http_client
 
@@ -21,7 +22,8 @@ def fake_dns(ip: str):
     return lambda host, port: [(family, socket.SOCK_STREAM, 6, "", (ip, 0))]
 
 
-@pytest.mark.parametrize("ip", ["127.0.0.1", "::1", "169.254.169.254", "0.0.0.0"])
+@pytest.mark.parametrize("ip", ["127.0.0.1", "::1", "169.254.169.254", "0.0.0.0",
+                                "::ffff:127.0.0.1", "::ffff:169.254.169.254"])
 async def test_fetch_refuses_loopback_and_metadata_addresses(monkeypatch, ip):
     monkeypatch.setattr(socket, "getaddrinfo", fake_dns(ip))
     with pytest.raises(PolicyError) as exc:
@@ -33,6 +35,33 @@ async def test_fetch_refuses_loopback_and_metadata_addresses(monkeypatch, ip):
 async def test_fetch_allows_internal_and_public_addresses(monkeypatch, ip):
     monkeypatch.setattr(socket, "getaddrinfo", fake_dns(ip))
     await http_client._refuse_unsafe_addresses("api.acme.internal")  # does not raise
+
+
+async def test_fetch_connects_to_the_address_it_checked(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", fake_dns("93.184.216.34"))
+    seen = {}
+
+    class Resp:
+        status_code, headers, content = 200, {}, b"ok"
+
+    class Client:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+        async def request(self, method, url, headers=None, json=None, extensions=None):
+            seen.update(url=url, headers=headers, extensions=extensions)
+            return Resp()
+    monkeypatch.setattr(http_client.httpx, "AsyncClient", Client)
+    tool = http_client.HTTPFetchTool(PolicyEngine(rules=[], default_deny=False))
+    await tool.run("acme", http_client.HTTPFetchInput(
+        url="https://api.company-status-page.internal:8443/x?y=1",
+        headers={"host": "evil.example", "X-A": "1"},
+    ))
+    assert seen["url"] == "https://93.184.216.34:8443/x?y=1"  # the checked address, not a new lookup
+    assert seen["headers"]["Host"] == "api.company-status-page.internal:8443"
+    assert "host" not in seen["headers"] and seen["headers"]["X-A"] == "1"
+    assert seen["extensions"] == {"sni_hostname": "api.company-status-page.internal"}
 
 
 class RecordingClient:

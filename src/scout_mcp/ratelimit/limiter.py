@@ -17,13 +17,18 @@ The refill logic is a single Lua script so check-and-consume is atomic.
 
 from __future__ import annotations
 
+import logging
+import math
 import time
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
+from redis.exceptions import NoScriptError, RedisError
 
 from scout_mcp.config import ServerSettings
 from scout_mcp.errors.framework import RateLimitError
+
+logger = logging.getLogger(__name__)
 
 
 # Lua script: atomic token-bucket refill + consume.
@@ -73,6 +78,8 @@ class RateLimiter:
         self.settings = settings
         self._redis: Redis | None = None
         self._script_sha: str | None = None
+        # Used only while Redis is unreachable: one bucket per (tenant, tool) in this process.
+        self._local: dict[str, tuple[float, float]] = {}
 
         # Default quota — overridden per-tool below.
         self._default = Quota(
@@ -87,13 +94,29 @@ class RateLimiter:
         }
 
     async def connect(self) -> None:
-        self._redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+        self._redis = Redis.from_url(
+            self.settings.redis_url, decode_responses=True,
+            socket_timeout=self.settings.redis_timeout_s,
+            socket_connect_timeout=self.settings.redis_timeout_s,
+        )
         self._script_sha = await self._redis.script_load(_LUA_SCRIPT)
 
     async def disconnect(self) -> None:
         if self._redis is not None:
             await self._redis.close()
             self._redis = None
+
+    def _acquire_locally(
+        self, key: str, quota: Quota, refill_per_s: float, cost: int
+    ) -> tuple[int, int]:
+        now = time.monotonic()
+        tokens, last = self._local.get(key, (float(quota.capacity), now))
+        tokens = min(float(quota.capacity), tokens + (now - last) * refill_per_s)
+        if tokens >= cost:
+            self._local[key] = (tokens - cost, now)
+            return 1, 0
+        self._local[key] = (tokens, now)
+        return 0, math.ceil((cost - tokens) / refill_per_s * 1000)
 
     def quota_for(self, tool: str) -> Quota:
         return self._overrides.get(tool, self._default)
@@ -107,15 +130,23 @@ class RateLimiter:
         key = f"scout:rl:{tenant}:{tool}"
 
         now_ms = int(time.time() * 1000)
-        allowed, retry_after_ms, _tokens = await self._redis.evalsha(
-            self._script_sha,
-            1,
-            key,
-            quota.capacity,
-            refill_per_s,
-            now_ms,
-            cost,
-        )
+        args = (key, quota.capacity, refill_per_s, now_ms, cost)
+        try:
+            try:
+                allowed, retry_after_ms, _tokens = await self._redis.evalsha(
+                    self._script_sha, 1, *args
+                )
+            except NoScriptError:
+                # Redis restarted and forgot the script. Load it again and retry once.
+                self._script_sha = await self._redis.script_load(_LUA_SCRIPT)
+                allowed, retry_after_ms, _tokens = await self._redis.evalsha(
+                    self._script_sha, 1, *args
+                )
+        except (RedisError, OSError):
+            # Redis is the shared counter. Without it each replica limits on its own,
+            # which is looser than the shared limit but not no limit at all.
+            logger.warning("rate limiter cannot reach Redis; limiting locally", exc_info=True)
+            allowed, retry_after_ms = self._acquire_locally(key, quota, refill_per_s, cost)
 
         if int(allowed) == 0:
             raise RateLimitError(retry_after_seconds=int(retry_after_ms) / 1000.0)

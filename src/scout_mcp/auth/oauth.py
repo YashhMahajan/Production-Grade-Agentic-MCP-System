@@ -62,9 +62,32 @@ class TokenValidator:
     def __init__(self, settings: ServerSettings):
         self.settings = settings
         self._jwks = PyJWKClient(settings.auth_jwks_url, cache_keys=True, max_cached_keys=16)
+        # Key ids that have verified a token. An id outside this set makes PyJWT refetch the
+        # JWKS from the authorization server, so those are rate-limited below.
+        self._known_kids: set[str | None] = set()
+        self._last_unknown_kid = float("-inf")
+
+    def _check_key_id(self, bearer: str) -> str | None:
+        """Let an unknown signing key id trigger a JWKS refetch at most once per cooldown.
+
+        Without this, anyone can send tokens with made-up key ids and make Scout fetch
+        the JWKS from the authorization server on every request.
+        """
+        try:
+            kid = jwt.get_unverified_header(bearer).get("kid")
+        except jwt.InvalidTokenError as exc:
+            raise AuthError("invalid_token", retryable=False, hint="malformed token") from exc
+        if kid in self._known_kids:
+            return kid
+        now = time.monotonic()
+        if now - self._last_unknown_kid < self.settings.auth_jwks_refetch_cooldown_s:
+            raise AuthError("invalid_token", retryable=False, hint="unknown signing key")
+        self._last_unknown_kid = now
+        return kid
         # PyJWKClient(cache_keys=True) caches the signing keys from the authorization server's JWKS endpoint. Without this, every request would make an HTTP call to fetch the public key, which would kill latency.
 
     def validate(self, bearer: str) -> Principal:
+        kid = self._check_key_id(bearer)
         try:
             signing_key = self._jwks.get_signing_key_from_jwt(bearer)
             claims = jwt.decode(
@@ -86,6 +109,7 @@ class TokenValidator:
 
         # MCP-specific claims. The authorization server populates these during
         # the consent flow — they travel with the token as agent metadata.
+        self._known_kids.add(kid)
         tenant = claims.get("tenant")
         if not tenant or not isinstance(tenant, str):
             if self.settings.require_tenant:

@@ -100,11 +100,21 @@ class HTTPFetchTool(Tool):
                 context={"host": host},
             )
         #follow_redirects=False matters a lot. Without it, an allowlisted host could redirect to a non-allowlisted one, bypassing our check.
-        await _refuse_unsafe_addresses(host)
+        safe_ip = await _refuse_unsafe_addresses(host)
+        # Connect to the address that was just checked, not to a second DNS answer. The
+        # certificate is still checked against the real name (sni_hostname), and the
+        # Host header names it too. A caller-supplied Host header is dropped.
+        parsed = urlparse(args.url)
+        netloc = f"[{safe_ip}]" if ":" in safe_ip else safe_ip
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        headers = {k: v for k, v in (args.headers or {}).items() if k.lower() != "host"}
+        headers["Host"] = f"{host}:{parsed.port}" if parsed.port else host
         try:
             async with httpx.AsyncClient(timeout=args.timeout_s, follow_redirects=False) as client:
                 resp = await client.request(
-                    args.method, args.url, headers=args.headers or {}, json=args.body
+                    args.method, parsed._replace(netloc=netloc).geturl(),
+                    headers=headers, json=args.body, extensions={"sni_hostname": host},
                 )
         except httpx.TimeoutException as exc:
             raise UpstreamError("http_timeout", retryable=True, hint=str(exc)) from exc
@@ -121,19 +131,23 @@ class HTTPFetchTool(Tool):
         }
 
 # By disabling redirects, we force the agent to see the 3xx response and make an explicit decision about where to go next.
-async def _refuse_unsafe_addresses(host: str) -> None:
+async def _refuse_unsafe_addresses(host: str) -> str:
     """An allowlisted name must not resolve to this machine or a cloud metadata address.
 
     RFC 1918 ranges stay reachable because the allowlist legitimately contains internal
-    names such as ``*.acme.internal``. The check runs before the request and the
-    request resolves again, so DNS that changes in between is not covered.
+    names such as ``*.acme.internal``. Returns the address the request must connect to,
+    so the address that was checked is the address that is used.
     """
     try:
         infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
     except socket.gaierror as exc:
         raise UpstreamError("http_dns_error", retryable=True, hint=str(exc)) from exc
+    first_safe: str | None = None
     for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])  # drop an IPv6 zone id
+        # ::ffff:127.0.0.1 is loopback, but Python 3.11 does not say so; unwrap it first.
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
         if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
             raise PolicyError(
                 "host_resolves_to_unsafe_address",
@@ -141,6 +155,8 @@ async def _refuse_unsafe_addresses(host: str) -> None:
                 hint=f"{host!r} resolves to {ip}, which outbound fetches may not reach",
                 context={"host": host},
             )
+        first_safe = first_safe or str(ip)
+    return first_safe or ""
 
 
 def _load_allowlist() -> dict[str, list[str]]:

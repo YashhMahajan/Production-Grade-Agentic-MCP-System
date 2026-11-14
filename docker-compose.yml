@@ -134,6 +134,8 @@ services:
       SCOUT_CLIENT_ID: ${SCOUT_CLIENT_ID:-copilot-acme}
       SCOUT_CLIENT_SECRET: ${SCOUT_CLIENT_SECRET:-dev-secret-copilot-acme}
       SCOUT_TENANT: ${SCOUT_TENANT:-acme}
+      # The address clients use (the TLS edge), for the protected-resource metadata.
+      SCOUT_PUBLIC_URL: ${SCOUT_PUBLIC_URL:-https://localhost:8443}
       SCOUT_LLM_API_KEY: ${SCOUT_LLM_API_KEY:-}
       SCOUT_LLM_MODEL: ${SCOUT_LLM_MODEL:-deepseek/deepseek-v4-flash:free}
       SCOUT_LLM_BASE_URL: ${SCOUT_LLM_BASE_URL:-https://openrouter.ai/api/v1}

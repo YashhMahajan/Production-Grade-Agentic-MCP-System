@@ -35,6 +35,8 @@ class ServerSettings(BaseSettings):
     # ── Component 2: Authentication ─────────────────────────────────────────
     auth_issuer: str = "https://auth.scout.local"
     auth_audience: str = "scout-mcp"
+    # How long an unknown signing key id must wait before it may trigger another JWKS fetch.
+    auth_jwks_refetch_cooldown_s: int = 30
     auth_jwks_url: str = "https://auth.scout.local/.well-known/jwks.json"
     auth_signing_key_path: str | None = None
     auth_require_pkce: bool = True
@@ -62,6 +64,8 @@ class ServerSettings(BaseSettings):
     # Tighter quotas for expensive tools (see ratelimit/limiter.py). Turn off to load test.
     rate_limit_per_tool_overrides: bool = True
     redis_url: str = "redis://localhost:6379/0"
+    # A Redis call that takes longer than this fails instead of stalling the request.
+    redis_timeout_s: float = 1.0
 
     # ── Component 9: Caching ────────────────────────────────────────────────
     cache_l1_max_items: int = 10_000

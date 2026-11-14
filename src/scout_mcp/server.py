@@ -27,6 +27,7 @@ import uvicorn
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -243,8 +244,16 @@ class ScoutServer:
         )
         spent_approval: str | None = None
         if needs_approval:
-            await self._require_approval(envelope, tool.meta.name, validated_args, approval_id)
-            await self.approvals.claim(approval_id)
+            try:
+                await self._require_approval(
+                    envelope, tool.meta.name, validated_args, approval_id
+                )
+                await self.approvals.claim(approval_id)
+            except (RedisError, OSError) as exc:
+                raise UpstreamError(
+                    "approvals_unavailable", retryable=True,
+                    hint="the approval store cannot be reached; nothing was run",
+                ) from exc
             spent_approval = approval_id
 
         # 9. Cache: hash of (tool, tenant, args), so tenants never share entries.
@@ -382,7 +391,11 @@ class ScoutServer:
         self.audit = AuditLogger(self.settings.audit_log_path)
         await self.cache.connect()
         await self.limiter.connect()
-        self._redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+        self._redis = Redis.from_url(
+            self.settings.redis_url, decode_responses=True,
+            socket_timeout=self.settings.redis_timeout_s,
+            socket_connect_timeout=self.settings.redis_timeout_s,
+        )
         self.approvals = ApprovalGate(self._redis)
         # Fail closed: a missing policy file stops the server rather than allowing everything.
         policy = PolicyEngine.from_file(

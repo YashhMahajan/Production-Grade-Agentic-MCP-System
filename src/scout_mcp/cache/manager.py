@@ -19,14 +19,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from scout_mcp.config import ServerSettings
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,7 +84,11 @@ class CacheManager:
         self._redis: Redis | None = None
 
     async def connect(self) -> None:
-        self._redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+        self._redis = Redis.from_url(
+            self.settings.redis_url, decode_responses=True,
+            socket_timeout=self.settings.redis_timeout_s,
+            socket_connect_timeout=self.settings.redis_timeout_s,
+        )
 
     async def disconnect(self) -> None:
         if self._redis is not None:
@@ -93,7 +102,12 @@ class CacheManager:
             return hit
         # L2 hit?
         if self._redis is not None:
-            raw = await self._redis.get(key)
+            try:
+                raw = await self._redis.get(key)
+            except (RedisError, OSError):
+                # A cache that is down is a miss. The tool runs; it just is not remembered.
+                logger.warning("cache read failed; treating as a miss", exc_info=True)
+                return None
             if raw is not None:
                 value = json.loads(raw)
                 # Populate L1 for next time.
@@ -107,7 +121,10 @@ class CacheManager:
         ttl_l1 = min(ttl_l2, self.settings.cache_l1_ttl_seconds)
         await self.l1.set(key, value, ttl_seconds=ttl_l1)
         if self._redis is not None:
-            await self._redis.set(key, json.dumps(value, default=str), ex=ttl_l2)
+            try:
+                await self._redis.set(key, json.dumps(value, default=str), ex=ttl_l2)
+            except (RedisError, OSError):
+                logger.warning("cache write failed; the result is kept in memory only", exc_info=True)
 
     async def delete(self, key: str) -> None:
         await self.l1.delete(key)

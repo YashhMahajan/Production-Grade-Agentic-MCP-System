@@ -10,6 +10,8 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import ValidationError
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import NoScriptError
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.responses import PlainTextResponse
@@ -17,8 +19,10 @@ from starlette.routing import Route
 
 from scout_mcp.auth.oauth import TokenValidator
 from scout_mcp.auth.origin import OriginMiddleware
+from scout_mcp.cache.manager import CacheManager
 from scout_mcp.config import ServerSettings
-from scout_mcp.errors.framework import AuthError
+from scout_mcp.errors.framework import AuthError, RateLimitError
+from scout_mcp.ratelimit.limiter import RateLimiter
 from scout_mcp.tools.atomic.elasticsearch import ElasticsearchSearchInput
 from scout_mcp.tools.atomic.postgres import PostgresQueryInput
 from scout_mcp.tools.atomic.vector_search import VectorSearchInput
@@ -135,6 +139,39 @@ def test_tenancy_can_be_switched_off_for_a_single_tenant_deployment(keypair):
     assert principal.tenant == "default"
 
 
+# ── An unknown signing key id cannot make Scout hammer the authorization server ──
+def test_unknown_key_ids_trigger_one_jwks_fetch_per_cooldown(keypair):
+    from jwt import PyJWKClientError
+
+    pem, public = keypair
+    fetches = []
+
+    class Jwks:
+        def get_signing_key_from_jwt(self, token):
+            fetches.append(1)
+            if jwt.get_unverified_header(token)["kid"] != "real":
+                raise PyJWKClientError("no key")
+            return type("Key", (), {"key": public})()
+    validator = TokenValidator(ServerSettings(_env_file=None, auth_jwks_refetch_cooldown_s=3600))
+    validator._jwks = Jwks()
+
+    def token(kid):
+        now = int(time.time())
+        claims = {"sub": "a", "jti": "j", "iat": now, "exp": now + 300, "tenant": "acme",
+                  "aud": "scout-mcp", "iss": "https://auth.scout.local"}
+        return jwt.encode(claims, pem, algorithm="RS256", headers={"kid": kid})
+
+    for guess in ("a", "b", "c", "d"):  # four made-up ids
+        with pytest.raises(AuthError):
+            validator.validate(token(guess))
+    assert len(fetches) == 1  # only the first reached the authorization server
+
+    # A key that has verified a token stays usable: no cooldown applies to it.
+    validator._known_kids.add("real")
+    assert validator.validate(token("real")).tenant == "acme"
+    assert len(fetches) == 2
+
+
 # ── Origin (MCP spec: 403 for an Origin that is present and not allowed) ───
 async def test_a_browser_origin_is_refused_and_a_client_without_one_is_not(app_client):
     refused = await app_client.get("/healthz", headers={"Origin": "https://evil.example"})
@@ -190,3 +227,64 @@ async def test_partial_results_are_not_cached_but_complete_ones_are(app_client, 
     assert len(runs) == 2
     await call(app_client, "customer.build_context", args)  # the complete one was stored
     assert len(runs) == 2
+
+
+# ── Redis trouble ──────────────────────────────────────────────────────────
+class DownRedis:
+    """Every command fails, as it does when the connection is gone."""
+
+    async def get(self, *a, **k): raise RedisConnectionError("down")
+    async def set(self, *a, **k): raise RedisConnectionError("down")
+    async def evalsha(self, *a, **k): raise RedisConnectionError("down")
+
+
+async def test_a_cache_that_is_down_is_a_miss_not_an_error():
+    cache = CacheManager(ServerSettings(_env_file=None))
+    cache._redis = DownRedis()
+    assert await cache.get("k") is None
+    await cache.set("k", {"v": 1}, ttl=60)  # does not raise
+    assert await cache.get("k") == {"v": 1}  # kept in memory
+
+
+async def test_a_rate_limiter_that_loses_redis_limits_locally():
+    limiter = RateLimiter(ServerSettings(_env_file=None, rate_limit_burst=3, rate_limit_default_rpm=60))
+    limiter._redis, limiter._script_sha = DownRedis(), "sha"
+    for _ in range(3):
+        await limiter.acquire("acme", "postgres.query")
+    with pytest.raises(RateLimitError) as err:
+        await limiter.acquire("acme", "postgres.query")
+    assert err.value.context["retry_after_seconds"] > 0
+    await limiter.acquire("globex", "postgres.query")  # another tenant has its own bucket
+
+
+async def test_a_rate_limiter_reloads_its_script_after_redis_restarts():
+    class Restarted:
+        def __init__(self): self.loads, self.calls = 0, 0
+        async def script_load(self, _src):
+            self.loads += 1
+            return f"sha{self.loads}"
+        async def evalsha(self, sha, *a):
+            self.calls += 1
+            if sha == "sha0":
+                raise NoScriptError("NOSCRIPT")
+            return [1, 0, 5]
+    redis = Restarted()
+    limiter = RateLimiter(ServerSettings(_env_file=None))
+    limiter._redis, limiter._script_sha = redis, "sha0"
+    await limiter.acquire("acme", "postgres.query")
+    assert redis.loads == 1 and limiter._script_sha == "sha1" and redis.calls == 2
+
+
+async def test_an_approval_store_that_is_down_says_so_and_runs_nothing(app_client, monkeypatch):
+    ran = []
+
+    async def put(self, tenant, args):
+        ran.append(1)
+        return {}
+    from scout_mcp.tools.atomic.s3_storage import S3PutTool
+    monkeypatch.setattr(S3PutTool, "run", put)
+    monkeypatch.setattr(app_client.server._redis, "set", DownRedis().set)
+    is_error, payload = await call(
+        app_client, "s3.put_object", {"key": "attachments/a.txt", "content": "x"}, token="writer")
+    assert is_error and payload["code"] == "approvals_unavailable" and payload["retryable"]
+    assert not ran
