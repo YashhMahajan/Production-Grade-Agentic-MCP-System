@@ -71,13 +71,15 @@ class TokenValidator:
         """Let an unknown signing key id trigger a JWKS refetch at most once per cooldown.
 
         Without this, anyone can send tokens with made-up key ids and make Scout fetch
-        the JWKS from the authorization server on every request.
+        the JWKS from the authorization server on every request. The limit starts once Scout
+        has verified one token: before that, every key id is new and none can be told apart.
         """
         try:
             kid = jwt.get_unverified_header(bearer).get("kid")
         except jwt.InvalidTokenError as exc:
             raise AuthError("invalid_token", retryable=False, hint="malformed token") from exc
-        if kid in self._known_kids:
+        if kid in self._known_kids or not self._known_kids:
+            # Until one key has verified a token, an unknown id is just the first real one.
             return kid
         now = time.monotonic()
         if now - self._last_unknown_kid < self.settings.auth_jwks_refetch_cooldown_s:

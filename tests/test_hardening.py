@@ -161,15 +161,20 @@ def test_unknown_key_ids_trigger_one_jwks_fetch_per_cooldown(keypair):
                   "aud": "scout-mcp", "iss": "https://auth.scout.local"}
         return jwt.encode(claims, pem, algorithm="RS256", headers={"kid": kid})
 
-    for guess in ("a", "b", "c", "d"):  # four made-up ids
-        with pytest.raises(AuthError):
-            validator.validate(token(guess))
-    assert len(fetches) == 1  # only the first reached the authorization server
-
-    # A key that has verified a token stays usable: no cooldown applies to it.
-    validator._known_kids.add("real")
+    # Cold start: nothing has verified yet, so a wrong id cannot lock out the first real one.
+    with pytest.raises(AuthError):
+        validator.validate(token("wrong-realm"))
     assert validator.validate(token("real")).tenant == "acme"
     assert len(fetches) == 2
+
+    for guess in ("a", "b", "c", "d"):  # four made-up ids once a real key is known
+        with pytest.raises(AuthError):
+            validator.validate(token(guess))
+    assert len(fetches) == 3  # only the first of them reached the authorization server
+
+    # A key that has verified a token stays usable: no cooldown applies to it.
+    assert validator.validate(token("real")).tenant == "acme"
+    assert len(fetches) == 4
 
 
 # ── Origin (MCP spec: 403 for an Origin that is present and not allowed) ───

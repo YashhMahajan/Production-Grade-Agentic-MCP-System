@@ -60,6 +60,8 @@ services:
       SCOUT_HTTP_PORT: "8080"
       SCOUT_STATELESS_MODE: "true"
       SCOUT_AUTH_ISSUER: ${SCOUT_AUTH_ISSUER:-http://keycloak:8080/realms/scout}
+      # The address clients use (the TLS edge), for the protected-resource metadata.
+      SCOUT_PUBLIC_URL: ${SCOUT_PUBLIC_URL:-https://localhost:8443}
       SCOUT_AUTH_AUDIENCE: ${SCOUT_AUTH_AUDIENCE:-scout-mcp}
       SCOUT_AUTH_JWKS_URL: ${SCOUT_AUTH_JWKS_URL:-http://keycloak:8080/realms/scout/protocol/openid-connect/certs}
       SCOUT_POLICY_DEFAULT_DENY: "true"
@@ -134,8 +136,6 @@ services:
       SCOUT_CLIENT_ID: ${SCOUT_CLIENT_ID:-copilot-acme}
       SCOUT_CLIENT_SECRET: ${SCOUT_CLIENT_SECRET:-dev-secret-copilot-acme}
       SCOUT_TENANT: ${SCOUT_TENANT:-acme}
-      # The address clients use (the TLS edge), for the protected-resource metadata.
-      SCOUT_PUBLIC_URL: ${SCOUT_PUBLIC_URL:-https://localhost:8443}
       SCOUT_LLM_API_KEY: ${SCOUT_LLM_API_KEY:-}
       SCOUT_LLM_MODEL: ${SCOUT_LLM_MODEL:-deepseek/deepseek-v4-flash:free}
       SCOUT_LLM_BASE_URL: ${SCOUT_LLM_BASE_URL:-https://openrouter.ai/api/v1}

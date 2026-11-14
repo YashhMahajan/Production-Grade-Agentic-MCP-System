@@ -76,6 +76,11 @@ Load policy.yaml at startup and fail if it is missing
 | Tools the retriever may call | `customer.build_context`, `semantic_search`, `hybrid_search`, `postgres.query`, `elasticsearch.search`, `vector.search` | `agents/retriever.py` |
 | Retriever iterations | 6 | `agents/retriever.py` |
 | Critic revisions | 1 | `agents/orchestrator.py` |
+| Tokens per run | 60,000 (`SCOUT_AGENT_TOKEN_BUDGET`), checked before every model and tool call | `agents/base.py` |
+| Time per run | 90 s (`SCOUT_AGENT_TIMEOUT_S`); the time left goes to the server on every tool call | `agents/base.py`, `agents/mcp_client.py` |
+| A reply that is not JSON | one repair attempt, then the step fails (the critic's failure is a rejection) | `agents/base.py` |
+| Tool results | wrapped in `<tool_data id=...>`, cut to 6,000 characters in the conversation and 1,500 as a finding | `agents/mcp_client.py`, `agents/retriever.py` |
+| Citations | every `[S#]` must name a finding, checked in code | `agents/orchestrator.py` |
 | Customer id | must look like `CUST-1001`, else the copilot asks for one | `agents/planner.py` |
 | Writes | none; the allow-list has no write tool, and the server also enforces policy | both |
 | LLM providers | one, unless `SCOUT_LLM_FALLBACK=true` | `agents/base.py` |
