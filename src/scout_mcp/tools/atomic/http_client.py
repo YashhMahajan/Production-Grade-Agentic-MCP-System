@@ -67,6 +67,9 @@ class HTTPFetchTool(Tool):
         cacheable=False,  # network side effects — never cache.
         timeout_ms=15_000,
         tags=("http", "network"),
+        read_only=False,
+        open_world=True,
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = HTTPFetchInput
 

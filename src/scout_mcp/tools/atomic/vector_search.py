@@ -43,6 +43,7 @@ class VectorSearchTool(Tool):
         cache_ttl_seconds=300,
         timeout_ms=2_000,
         tags=("vector", "qdrant", "retrieval"),
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = VectorSearchInput
 

@@ -26,6 +26,7 @@ from dataclasses import asdict, dataclass
 import uvicorn
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.types import CallToolResult, ListToolsResult, TextContent
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from starlette.applications import Starlette
@@ -110,7 +111,11 @@ class ScoutServer:
 
     def __init__(self, settings: ServerSettings):
         self.settings = settings
-        self.mcp = Server(settings.service_name)
+        self.mcp = Server(
+            settings.service_name,
+            on_list_tools=self._on_list_tools,
+            on_call_tool=self._on_call_tool,
+        )
 
         # Shared singletons used across requests.
         self.registry = ToolRegistry(issuer=settings.auth_issuer)
@@ -125,15 +130,9 @@ class ScoutServer:
         self._redis: Redis | None = None
         self.ready = False
 
-        self._register_mcp_handlers()
-
     # ── Request context ────────────────────────────────────────────────────
-    def _current_context(self) -> CallContext:
+    def _context_from(self, request) -> CallContext:
         """Read the identity the auth and tenant middleware attached to this request."""
-        try:
-            request = self.mcp.request_context.request
-        except LookupError:
-            request = None
         if request is None:
             # stdio transport: no HTTP request, no token.
             return CallContext("stdio:local", self.settings.tenant, _STDIO_SCOPES, _STDIO_ROLES)
@@ -150,35 +149,43 @@ class ScoutServer:
         )
 
     # ── MCP protocol handlers ──────────────────────────────────────────────
-    def _register_mcp_handlers(self) -> None:
-        @self.mcp.list_tools()
-        async def list_tools():  # type: ignore[misc]
-            ctx = self._current_context()
-            return self.registry.list_visible(tenant=ctx.tenant, scopes=ctx.scopes)
+    # SDK 2.x passes the request to each handler as ``ctx.request``: the Starlette request
+    # the auth and tenant middleware have already stamped with the verified principal.
+    async def _on_list_tools(self, ctx, _params) -> ListToolsResult:
+        caller = self._context_from(ctx.request)
+        return ListToolsResult(
+            tools=self.registry.list_visible(tenant=caller.tenant, scopes=caller.scopes)
+        )
 
-        @self.mcp.call_tool()
-        async def call_tool(name: str, arguments: dict):  # type: ignore[misc]
-            try:
-                ctx = self._current_context()
-                envelope = ToolCallEnvelope(
-                    tool=name,
-                    arguments=dict(arguments),
-                    tenant=ctx.tenant,
-                    caller=ctx.subject,
-                    delegator=ctx.delegator,
-                    scopes=ctx.scopes,
-                    roles=ctx.roles,
-                    deadline_ms=ctx.deadline_ms,
-                )
-                return await self._dispatch(envelope)
-            except ToolError as exc:
-                # Component 10: keep code / retryable / hint intact on the wire.
-                return to_call_tool_result(exc)
-            except Exception:
-                logger.exception("unhandled error in tool call", extra={"tool": name})
-                return to_call_tool_result(
-                    ToolError("internal_error", retryable=False, hint="unexpected server error")
-                )
+    async def _on_call_tool(self, ctx, params) -> CallToolResult:
+        try:
+            caller = self._context_from(ctx.request)
+            envelope = ToolCallEnvelope(
+                tool=params.name,
+                arguments=dict(params.arguments or {}),
+                tenant=caller.tenant,
+                caller=caller.subject,
+                delegator=caller.delegator,
+                scopes=caller.scopes,
+                roles=caller.roles,
+                deadline_ms=caller.deadline_ms,
+            )
+            result = await self._dispatch(envelope)
+            # Version 2 no longer wraps a returned dict: build the result here. The JSON text
+            # block is what ScoutMCPClient reads; structuredContent is the same object for
+            # clients that read that instead.
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(result))],
+                structuredContent=result,
+            )
+        except ToolError as exc:
+            # Component 10: keep code / retryable / hint intact on the wire.
+            return to_call_tool_result(exc)
+        except Exception:
+            logger.exception("unhandled error in tool call", extra={"tool": params.name})
+            return to_call_tool_result(
+                ToolError("internal_error", retryable=False, hint="unexpected server error")
+            )
 
     async def _dispatch(self, envelope: ToolCallEnvelope) -> dict:
         """One span and one audit record per call, whatever the outcome."""

@@ -51,6 +51,7 @@ class SemanticSearchTool(Tool):
         cache_ttl_seconds=120,
         timeout_ms=8_000,
         tags=("rag", "retrieval", "semantic"),
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = SemanticSearchInput
 

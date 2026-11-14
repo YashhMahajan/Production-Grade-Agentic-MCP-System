@@ -9,7 +9,7 @@ authors = [{ name = "Scout-MCP Contributors" }]
 
 dependencies = [
   # MCP core
-  "mcp>=1.2,<2",
+  "mcp>=2.3,<3",
   # Embeddings (ONNX runtime, no PyTorch: ~10x smaller install)
   "fastembed>=0.4",
   # Transport & server

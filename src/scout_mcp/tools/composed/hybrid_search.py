@@ -45,6 +45,7 @@ class HybridSearchTool(Tool):
         cache_ttl_seconds=120,
         timeout_ms=10_000,
         tags=("rag", "retrieval", "hybrid", "rrf"),
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = HybridSearchInput
 

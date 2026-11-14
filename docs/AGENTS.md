@@ -20,7 +20,7 @@ Rules for any AI assistant or script working in this repo, then the limits the c
 - Make the smallest change that does the job. Every changed line should trace to the request. Do not reformat or "improve" neighbouring code.
 - Reproduce a bug with a failing test, then fix it, then show the test passing.
 - Match the existing style. Docs are first person ("I chose..."), plain, and give the reason for each choice.
-- Pin dependencies and images that have broken us: `mcp<2`, `elasticsearch<9`, and every image tag. Check that a tag exists before using it (MinIO's disappeared from both Docker Hub and Quay).
+- Pin dependencies and images that have broken us: `mcp<3`, `elasticsearch<9`, and every image tag. Check that a tag exists before using it (MinIO's disappeared from both Docker Hub and Quay).
 - Say what was verified and how. "Parsed" is not "ran". "Passes against a fake" is not "works against Postgres". A green CI run is the evidence for anything in compose.
 
 ## Commands

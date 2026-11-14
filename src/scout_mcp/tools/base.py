@@ -53,6 +53,11 @@ class ToolMetadata:
     cache_ttl_seconds: int = 60
     timeout_ms: int = 10_000
     tags: tuple[str, ...] = ()
+    # Hints for clients (MCP tool annotations). ``destructive`` above says a human must approve.
+    read_only: bool = True
+    open_world: bool = False  # reaches outside this deployment's own stores
+    # Output can hold text written by customers or third parties, so the description says so.
+    returns_untrusted_data: bool = False
 
 
 class Tool(ABC):

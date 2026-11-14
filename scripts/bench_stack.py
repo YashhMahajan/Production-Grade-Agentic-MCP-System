@@ -114,7 +114,7 @@ async def main(n: int, seconds: float) -> dict:
             results[name] = {"cache_miss": summarize(miss), "cache_hit": summarize(hit),
                              "cache_speedup_p50": round(statistics.median(miss) / statistics.median(hit), 1)}
     results["concurrent_cache_hits"] = await throughput(
-        factory, headers, "postgres.query", lambda w, i: pg(-1), seconds, 16)
+        factory, headers, "postgres.query", lambda w, i: pg("hit"), seconds, 16)
     results["concurrent_cache_misses"] = await throughput(
         factory, headers, "postgres.query", lambda w, i: pg(f"{w}-{i}"), seconds, 16)
 

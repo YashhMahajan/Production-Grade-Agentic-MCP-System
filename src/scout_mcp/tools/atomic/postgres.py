@@ -85,6 +85,7 @@ class PostgresQueryTool(Tool):
         cache_ttl_seconds=30,
         timeout_ms=5_000,
         tags=("postgres", "sql", "read"),
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = PostgresQueryInput
 

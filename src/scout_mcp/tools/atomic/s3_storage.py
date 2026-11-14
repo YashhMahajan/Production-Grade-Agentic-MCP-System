@@ -39,6 +39,7 @@ class S3GetTool(Tool):
         cache_ttl_seconds=300,
         timeout_ms=3_000,
         tags=("s3", "storage", "read"),
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = S3GetInput
 
@@ -89,6 +90,7 @@ class S3PutTool(Tool):
         cacheable=False,
         timeout_ms=5_000,
         tags=("s3", "storage", "write"),
+        read_only=False,
     )
     input_schema: ClassVar[type[BaseModel]] = S3PutInput
 

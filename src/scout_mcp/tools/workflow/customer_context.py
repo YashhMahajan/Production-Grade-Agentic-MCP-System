@@ -56,6 +56,7 @@ class CustomerContextTool(Tool):
         cache_ttl_seconds=30,
         timeout_ms=15_000,
         tags=("support", "context", "workflow"),
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = CustomerContextInput
 

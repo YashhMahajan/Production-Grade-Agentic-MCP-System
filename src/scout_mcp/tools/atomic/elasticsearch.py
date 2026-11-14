@@ -31,6 +31,7 @@ class ElasticsearchSearchTool(Tool):
         cache_ttl_seconds=30,
         timeout_ms=3_000,
         tags=("elasticsearch", "search", "read"),
+        returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = ElasticsearchSearchInput
 

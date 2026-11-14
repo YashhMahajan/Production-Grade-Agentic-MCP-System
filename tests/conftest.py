@@ -45,6 +45,7 @@ PG, ES, VEC = "tool:postgres:read", "tool:elasticsearch:read", "tool:vector:read
 TOKENS = {
     "support": principal(scopes=(PG, ES, VEC), roles=("role:support_copilot",)),
     "analyst": principal(scopes=(PG,), roles=("role:analyst",)),
+    "admin": principal(scopes=("tool:*:admin",), roles=("role:support_copilot",)),
     "fetcher": principal(scopes=("tool:http:fetch",), roles=("role:support_copilot",)),
     "noscope": principal(scopes=(), roles=("role:support_copilot",)),
     "writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",)),
