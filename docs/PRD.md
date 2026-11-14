@@ -39,10 +39,10 @@ I built Scout MCP to show how I handled those, in code small enough to read, and
 | R2 Hidden tools cannot be called | `missing_scope` on a call to a tool the token does not grant | Done, tested |
 | R3 Policy from YAML, deny wins, default deny | `config/policy.yaml` loaded at startup; missing file stops the server | Done, tested |
 | R4 Structured errors | `code`, `retryable`, `hint` reach the client | Done, tested |
-| R5 Approval for destructive tools | First call returns `pending_approval`; a different identity with `approval:review` approves; only the approved arguments run, once | Done. Tested end to end with S3. |
+| R5 Approval for destructive tools | First call returns `pending_approval`; a different identity with `approval:review` approves; only the approved arguments run, once, even when five calls use the id at the same time | Done. Tested end to end with S3. |
 | R6 Audit | One JSON line per call with a trace id, arguments hashed | Done. Tested against the real stack. |
 | R7 Observability | Spans in Jaeger, Prometheus scrapes and loads the alert rules, Grafana dashboard provisioned | Done. All three checked in CI. |
-| R8 Runs from a fresh checkout | Compose up, seed, 31 end-to-end tests pass | Met in CI. The one step CI does not run is the copilot's LLM call, which needs an API key. |
+| R8 Runs from a fresh checkout | Compose up, seed, 33 end-to-end tests pass | Met in CI. The one step CI does not run is the copilot's LLM call, which needs an API key. |
 | R9 Measured performance | Script-backed figures, real-backend figures from CI | Met for three CI runs. See [PERFORMANCE.md](PERFORMANCE.md). |
 | R10 Real identity | Tokens from Keycloak with tenant, roles, scopes and audience | Done. A token from another issuer is refused with 401. |
 | R11 Least exposure | Only the edge and four UIs reach the host; stores are internal and need credentials | Done. Checked by connecting to each port and by probing each store without a credential. |
@@ -54,13 +54,17 @@ Targets I set, and what CI observed.
 
 | Measure | Target | Observed |
 |---------|--------|----------|
-| `pytest` and `ruff` with no Docker | pass, under 10 s | 76 tests in about 4 s |
-| End-to-end tests against the real stack | all pass | 31 of 31 |
+| `pytest` and `ruff` with no Docker | pass, under 10 s | 151 tests in about 5 s |
+| End-to-end tests against the real stack | all pass | 33 of 33 |
 | Request overhead, backend faked (p95) | under 5 ms | 3.3 to 3.9 ms |
 | Cache hit through the edge (p95) | under 10 ms | 5.2 to 8.2 ms for `postgres.query`; 6.8 to 11.2 ms for `customer.build_context`, so one run missed the target |
 | `customer.build_context` on a miss (p95) | under 100 ms | 65.7 to 78.9 ms |
 | Whole stack memory | under 2.5 GiB | 2.2 to 2.3 GiB |
 | Errors in a 16-client run | 0 | 0 |
+
+## Scope of 0.4.0
+
+A security review of the code and the fixes it led to ([ISSUES.md](ISSUES.md) 43 to 57), the move to MCP SDK 2.x, tool annotations, and the agent layer: tool output marked as data, enforced token and time budgets, one repair attempt for a reply that is not JSON, citations checked in code, and the agent's remaining time passed to the server. Not in 0.4.0: the 2026-07-28 spec's stateless handshake on Scout's own client, typed output schemas, a model-quality evaluation (it needs a model and a key, so I have not run one), and the first two items under Next.
 
 ## Scope of 0.3.0
 
@@ -70,7 +74,7 @@ Keycloak, a TLS edge, an internal data network with a credential on every store,
 
 1. Put a distribution behind the benchmark variance (more runs, or a dedicated runner), try a slow warehouse query, and try more than one replica.
 2. Keycloak in production mode with real TLS, and secrets from an environment or secret store instead of the repo.
-3. A refetch cooldown on the JWKS so unknown key ids cannot make Scout hammer Keycloak.
-4. Decide which LLM providers may see customer text.
+3. Check every table a query reads against policy (from `EXPLAIN`), and take `EXECUTE` on `set_config` away from the role that runs agent SQL.
+4. Decide which LLM providers may see customer text, then run a model evaluation on the seed data and publish the result.
 5. Use or remove `agents/memory.py`.
 6. More services in `deploy/`. I will add one only with a measured benefit or a test that proves the control it provides.

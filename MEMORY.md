@@ -8,16 +8,15 @@ Scout MCP: a multi-tenant MCP server that gives agents access to Postgres, Elast
 
 Docs in `docs/`, exactly six files: ARCHITECTURE, ISSUES, PRD, AGENTS, PERFORMANCE, DATA-MODEL. New knowledge goes into one of them or into this file. Do not add other markdown files.
 
-## State (0.3.0, released)
+## State (0.4.0)
 
-Released as v0.3.0 on 2026-11-13, tagged at e6ec00a, the commit CI verified. The next session is for making the MCP more thorough and better; start from the open work list below.
+0.4.0 comes from branch `reliability-and-spec-2026`: a security review, the move to MCP SDK 2.x, and agent-layer work. Every change is in `docs/ISSUES.md` (43 to 63), each row with the test that guards it. v0.3.0 was tagged at e6ec00a.
 
-- 15 audited defects fixed, plus 27 more found while fixing and while running the real stack in CI. All in `docs/ISSUES.md`, each with the test that guards it.
-- 76 tests pass in about 4 s with no Docker, and `ruff` is clean.
-- CI (`.github/workflows/ci.yml`) has four jobs: `test`, `validate-deploy`, `stack`, `security`. The `stack` job builds the image, starts 12 services, seeds, runs 31 end-to-end tests and the real-stack benchmark. It passed on the renamed `main`.
-- Real-backend numbers are in `docs/PERFORMANCE.md`, from three CI runs on a 4-vCPU shared runner: cache hits 5 to 7 ms, `customer.build_context` 45 to 55 ms on a miss and 5 to 8 ms on a hit (6.7 to 8.3x), 134 to 199 requests/s with 16 clients, whole stack 2.2 to 2.3 GiB. The same row varies by up to about 40% between runs, so quote ranges.
-- The image has 0 fixable HIGH or CRITICAL findings (was 4) and is 1.06 GB. CI fails on any fixable HIGH or CRITICAL.
-- Never run on the owner's Mac under Docker, by their rule. CI is the only place the stack runs.
+- 151 unit and in-process tests pass in about 5 s with no Docker, `ruff` is clean, and 33 end-to-end tests pass against the real 12-service stack in CI.
+- CI has four jobs: `test`, `validate-deploy`, `stack`, `security`. Start one on a branch with `gh workflow run ci.yml --ref <branch>`; it also runs on pull requests.
+- The environment I built this in had no local dependencies and a metered connection, so the loop was edit, push the branch, read CI. That works and costs the laptop nothing. Download size matters to the owner; ask before installing.
+- Real-backend numbers in `docs/PERFORMANCE.md` are from 0.3.0 and have not been re-measured on 0.4.0.
+- Not in 0.4.0: the 2026-07-28 stateless handshake on Scout's own client, typed output schemas, a model evaluation (needs a model and a key; ask which model).
 
 ## Rules (the owner's, stated in session)
 
@@ -46,7 +45,10 @@ To read a failed CI run: `gh run view <id> --json jobs`, then `gh api repos/<own
 ## Decisions and why
 
 - **bge-base-en-v1.5 through fastembed (ONNX), not sentence-transformers.** About 1 point lower MTEB retrieval than bge-large, 5.7x smaller model, no PyTorch (venv 1.2 GB to 463 MB).
-- **`mcp>=1.2,<2`.** 2.x removed the `@server.list_tools()` and `@server.call_tool()` decorators.
+- **`mcp>=2.3,<3`.** 2.x replaced the decorators with `on_list_tools` and `on_call_tool` on `Server(...)`; the verified principal comes from `ctx.request`. The models still accept camelCase constructor arguments.
+- **A guard that is blunt on purpose.** `postgres.query` refuses `set_config`, `pg_*` and any quote, comment or dollar quoting, even inside a string. A cleverer filter is a bypass waiting to happen; the benchmark had to change instead.
+- **Approvals are `SET NX` keys**, not a record that is rewritten: a decision and a claim each have one winner.
+- **The agent client waits out a rate limit once.** Tests that want the server's raw answer use `_call_once`.
 - **`elasticsearch<9`.** The compose server is 8.14.
 - **Server connects to Postgres as `atlas_app`.** The compose superuser bypasses row-level security. The role name predates the rename.
 - **Elasticsearch exact-match fields are `keyword`.** The default mapping breaks `term` queries and lets tenant `acme` match `acme-corp`.
@@ -63,12 +65,14 @@ To read a failed CI run: `gh run view <id> --json jobs`, then `gh api repos/<own
 
 ## Open work, in order
 
-1. Benchmark variance: more runs or a dedicated runner, a slow warehouse query, more than one replica.
-2. Keycloak in production mode with real TLS; secrets out of the repo.
-3. A refetch cooldown on the JWKS (unknown key ids make Scout refetch from Keycloak every time).
-4. Decide which LLM providers may see customer text.
-5. Use or remove `agents/memory.py`.
-6. More `deploy/` services, each justified by a measured benefit or a test of its control.
+1. Check every table a query reads against policy (from `EXPLAIN`), and revoke `EXECUTE` on `set_config` from the role that runs agent SQL. Find out in CI whether `set_config()` in a query really moved the tenant before 0.4.0 closed it.
+2. Run a model evaluation on the seed data and publish the result (needs the owner's choice of model and key).
+3. Typed output schemas for the tools; the 2026-07-28 handshake in `ScoutMCPClient`.
+4. Benchmark variance: more runs or a dedicated runner, a slow warehouse query, more than one replica; re-measure on 0.4.0.
+5. Keycloak in production mode with real TLS; secrets out of the repo.
+6. Decide which LLM providers may see customer text.
+7. Use or remove `agents/memory.py`.
+8. More `deploy/` services, each justified by a measured benefit or a test of its control.
 
 ## Pointers
 
