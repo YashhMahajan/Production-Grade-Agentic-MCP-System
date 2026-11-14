@@ -95,7 +95,7 @@ async def main(n: int, seconds: float) -> dict:
         await fetch_token(TOKEN_URL, "copilot-acme", "dev-secret-copilot-acme")
         token_times.append((time.perf_counter() - start) * 1000)
 
-    pg = lambda i: {"sql": f"SELECT id, status FROM orders WHERE status <> 'miss-{i}' ORDER BY id"}  # noqa: E731
+    pg = lambda i: {"sql": f"SELECT id, status FROM orders WHERE status <> 'miss_{i}' ORDER BY id"}  # noqa: E731
     ctx = lambda i: {"customer_id": "CUST-1001", "question": f"refund question number {i}"}  # noqa: E731
     sem = lambda i: {"query": f"how long do refunds take {i}", "collection": "support_docs",  # noqa: E731
                      "hydrate_from_postgres": False}
@@ -114,7 +114,7 @@ async def main(n: int, seconds: float) -> dict:
             results[name] = {"cache_miss": summarize(miss), "cache_hit": summarize(hit),
                              "cache_speedup_p50": round(statistics.median(miss) / statistics.median(hit), 1)}
     results["concurrent_cache_hits"] = await throughput(
-        factory, headers, "postgres.query", lambda w, i: pg("hit"), seconds, 16)
+        factory, headers, "postgres.query", lambda w, i: pg(-1), seconds, 16)
     results["concurrent_cache_misses"] = await throughput(
         factory, headers, "postgres.query", lambda w, i: pg(f"{w}-{i}"), seconds, 16)
 
