@@ -176,7 +176,7 @@ async def test_destructive_tools_wait_for_approval_then_run_once(app_client, mon
     is_error, payload = await call(
         app_client, "s3.put_object", {**args, "approval_id": approval_id}, token="writer"
     )
-    assert is_error and payload["code"] == "approval_not_found"
+    assert is_error and payload["code"] == "approval_already_used" and len(ran) == 1
 
 
 async def test_unapproved_approval_id_is_refused(app_client):

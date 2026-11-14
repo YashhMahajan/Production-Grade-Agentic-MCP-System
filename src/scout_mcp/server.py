@@ -34,11 +34,13 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from scout_mcp.auth.middleware import AuthMiddleware
+from scout_mcp.auth.origin import OriginMiddleware
 from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.cache.manager import CacheManager
 from scout_mcp.config import ServerSettings, get_settings
 from scout_mcp.errors.framework import (
     AuthError,
+    CircuitOpenError,
     PolicyError,
     RateLimitError,
     ToolError,
@@ -215,9 +217,17 @@ class ScoutServer:
             self.metrics.rate_limited.labels(tool=envelope.tool).inc()
             raise
 
-        # 12. Destructive tools wait for a human.
-        if tool.meta.destructive and self.settings.destructive_tool_requires_approval:
+        # 12. Calls that change state wait for a human, and spend the approval first:
+        # two calls with the same approved id must not both run.
+        needs_approval = (
+            tool.needs_approval(validated_args)
+            and self.settings.destructive_tool_requires_approval
+        )
+        spent_approval: str | None = None
+        if needs_approval:
             await self._require_approval(envelope, tool.meta.name, validated_args, approval_id)
+            await self.approvals.claim(approval_id)
+            spent_approval = approval_id
 
         # 9. Cache: hash of (tool, tenant, args), so tenants never share entries.
         cache_key = tool.cache_key(envelope.tenant, validated_args)
@@ -233,7 +243,14 @@ class ScoutServer:
         breaker = self.breakers.for_tool(envelope.tool)
         try:
             with self.metrics.latency.labels(tool=envelope.tool).time():
-                result = await breaker.call(self._execute, tool, envelope.tenant, validated_args)
+                result = await breaker.call(
+                    self._execute, tool, envelope.tenant, validated_args, needs_approval
+                )
+        except CircuitOpenError:
+            # The backend was never called, so the human's approval is still good.
+            if spent_approval is not None:
+                await self.approvals.release(spent_approval)
+            raise
         finally:
             self.metrics.circuit_state.labels(tool=envelope.tool).set(
                 _CIRCUIT_GAUGE[breaker.state]
@@ -242,22 +259,25 @@ class ScoutServer:
         # Backends return datetimes, UUIDs and Decimals, which the MCP SDK cannot encode.
         # Normalise once here so the response and the cache hold the same plain JSON.
         result = json.loads(json.dumps(result, default=str))
-        if tool.cacheable:
+        # A result that says part of it failed is not stored: one backend blip would
+        # otherwise be served to every caller until the entry expires.
+        if tool.cacheable and not result.get("partial_errors"):
             await self.cache.set(cache_key, result, ttl=tool.cache_ttl_seconds)
-        if approval_id and self.approvals is not None:
-            await self.approvals.consume(approval_id)
 
         self.metrics.calls_total.labels(tool=envelope.tool, status="ok").inc()
         return result
 
-    async def _execute(self, tool, tenant: str, args) -> dict:
-        """Run the tool with retries, inside a timeout from the ATBA budget."""
+    async def _execute(self, tool, tenant: str, args, once: bool = False) -> dict:
+        """Run the tool with retries, inside a timeout from the ATBA budget.
+
+        ``once`` is for calls that change state: a retried write can run twice.
+        """
         try:
             return await self.atba.call_with_budget(
                 tool.meta.name,
                 with_retry(
                     tool.execute, tenant, args,
-                    max_attempts=self.settings.retry_max_attempts,
+                    max_attempts=1 if once else self.settings.retry_max_attempts,
                     base_delay_ms=self.settings.retry_base_delay_ms,
                 ),
                 cap_s=tool.meta.timeout_ms / 1000,
@@ -284,6 +304,9 @@ class ScoutServer:
             )
             raise PendingApprovalError(approval)
         approval = await self.approvals.check(approval_id, envelope.tenant)
+        if approval.state == "consumed":
+            raise PolicyError("approval_already_used", retryable=False,
+                              hint="this approval has already been used; ask for a new one")
         if approval.state != "approved":
             raise PolicyError("approval_not_granted", retryable=False,
                               hint=f"approval is {approval.state}")
@@ -425,6 +448,8 @@ def build_http_app(server: ScoutServer) -> Starlette:
             await server.shutdown()
 
     middleware = [
+        # Origin first: a browser origin that is not allowed gets 403 before anything else.
+        Middleware(OriginMiddleware, settings=server.settings),
         # Order matters: auth populates identity, then tenant middleware reads it.
         Middleware(AuthMiddleware, settings=server.settings),
         Middleware(TenantMiddleware, settings=server.settings),
@@ -438,9 +463,21 @@ def build_http_app(server: ScoutServer) -> Starlette:
             return JSONResponse({"status": "ready"})
         return JSONResponse({"status": "not_ready"}, status_code=503)
 
+    async def protected_resource(request):
+        """RFC 9728: tells a client which authorization server issues tokens for /mcp."""
+        base = (server.settings.public_url or str(request.base_url)).rstrip("/")
+        scopes = sorted({s for tool in server.registry for s in tool.meta.scopes_required})
+        return JSONResponse({
+            "resource": f"{base}/mcp",
+            "authorization_servers": [server.settings.auth_issuer],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": scopes,
+        })
+
     routes = [
         # Discovery without a live session (public).
         Route("/.well-known/mcp-server", endpoint=server.registry.well_known_endpoint),
+        Route("/.well-known/oauth-protected-resource", endpoint=protected_resource),
         Route("/healthz", endpoint=healthz),  # liveness probe
         Route("/readyz", endpoint=readyz),  # readiness probe: Redis reachable, tools loaded
         Route("/metrics", endpoint=metrics_endpoint_for(server.metrics)),

@@ -35,7 +35,7 @@ class PendingApproval:
     tool: str
     arguments: dict[str, Any]
     created_at: str
-    state: Literal["pending", "approved", "denied", "expired"] = "pending"
+    state: Literal["pending", "approved", "denied", "consumed"] = "pending"
     approver: str | None = None
 
 
@@ -62,13 +62,18 @@ class PendingApprovalError(ToolError):
 
 
 class ApprovalGate:
-    """Creates pending approvals and checks their state on resume."""
+    """Creates pending approvals and records who decided and who used them.
+
+    The request record is written once and never changed. A decision and a claim
+    are each a separate key written with ``SET NX``, so Redis picks exactly one
+    winner when two reviewers decide at once, or when two calls try to spend the
+    same approval. Neither key outlives the request record: they take its
+    remaining TTL, so a decision never extends the hour the request had.
+    """
 
     def __init__(self, redis: Redis):
         self._redis = redis
 
-    # request() creates a new pending approval, stores it in Redis with a 1-hour TTL, and returns it.
-    # The TTL means an unreviewed approval self-destructs after an hour, so Redis does not fill up with abandoned requests.
     async def request(self, *, tenant: str, caller: str, delegator: str | None,
                       tool: str, arguments: dict[str, Any]) -> PendingApproval:
         approval = PendingApproval(
@@ -80,14 +85,69 @@ class ApprovalGate:
             arguments=arguments,
             created_at=datetime.now(UTC).isoformat(),
         )
-        key = self._key(approval.id)
-        await self._redis.set(key, json.dumps(asdict(approval)), ex=APPROVAL_TTL_SECONDS)
+        await self._redis.set(
+            self._key(approval.id), json.dumps(asdict(approval)), ex=APPROVAL_TTL_SECONDS
+        )
         return approval
 
-    # check() enforces that the tenant of the approval must match the expected tenant
-    # This prevents an attacker with access to one tenant's API from using another tenant's approval id to run a destructive operation.
     async def check(self, approval_id: str, expected_tenant: str) -> PendingApproval:
-        """Look up an approval and enforce that the tenant matches."""
+        """Look up an approval, enforce the tenant, and report its current state."""
+        approval = await self._load(approval_id)
+        if approval.tenant != expected_tenant:
+            raise PolicyError(
+                "approval_tenant_mismatch",
+                retryable=False,
+                hint="approval belongs to a different tenant",
+            )
+        return await self._with_state(approval)
+
+    async def approve(self, approval_id: str, approver: str) -> PendingApproval:
+        return await self._decide(approval_id, approver, "approved")
+
+    async def deny(self, approval_id: str, approver: str) -> PendingApproval:
+        return await self._decide(approval_id, approver, "denied")
+
+    async def claim(self, approval_id: str) -> None:
+        """Spend the approval. Of any number of concurrent callers, one succeeds."""
+        ttl = await self._remaining_ttl(approval_id)
+        if not await self._redis.set(self._claim_key(approval_id), "1", nx=True, ex=ttl):
+            raise PolicyError(
+                "approval_already_used",
+                retryable=False,
+                hint="this approval has already been used; ask for a new one",
+            )
+
+    async def release(self, approval_id: str) -> None:
+        """Hand the approval back after a call that never reached the backend."""
+        await self._redis.delete(self._claim_key(approval_id))
+
+    async def _decide(self, approval_id: str, approver: str, state: str) -> PendingApproval:
+        approval = await self._load(approval_id)
+        ttl = await self._remaining_ttl(approval_id)
+        won = await self._redis.set(
+            self._decision_key(approval_id),
+            json.dumps({"state": state, "approver": approver}),
+            nx=True, ex=ttl,
+        )
+        if not won:
+            raise PolicyError(
+                "approval_already_decided",
+                retryable=False,
+                hint="another reviewer decided this approval first",
+            )
+        return await self._with_state(approval)
+
+    async def _with_state(self, approval: PendingApproval) -> PendingApproval:
+        raw = await self._redis.get(self._decision_key(approval.id))
+        if raw is not None:
+            decision = json.loads(raw)
+            approval.state = decision["state"]
+            approval.approver = decision["approver"]
+        if await self._redis.get(self._claim_key(approval.id)) is not None:
+            approval.state = "consumed"
+        return approval
+
+    async def _load(self, approval_id: str) -> PendingApproval:
         raw = await self._redis.get(self._key(approval_id))
         if raw is None:
             raise PolicyError(
@@ -95,46 +155,20 @@ class ApprovalGate:
                 retryable=False,
                 hint=f"approval {approval_id!r} does not exist or has expired",
             )
-        approval = PendingApproval(**json.loads(raw))
-        if approval.tenant != expected_tenant:
-            raise PolicyError(
-                "approval_tenant_mismatch",
-                retryable=False,
-                hint="approval belongs to a different tenant",
-            )
-        return approval
-
-    # Both record who approved or denied. This goes into the audit log, which is critical for compliance.
-    # If an auditor asks “who approved the refund for customer X”, we need to answer.
-    async def approve(self, approval_id: str, approver: str) -> PendingApproval:
-        approval = await self._load(approval_id)
-        approval.state = "approved"
-        await self._save(approval, add_approver=approver)
-        return approval
-
-    async def deny(self, approval_id: str, approver: str) -> PendingApproval:
-        approval = await self._load(approval_id)
-        approval.state = "denied"
-        await self._save(approval, add_approver=approver)
-        return approval
-
-    async def consume(self, approval_id: str) -> None:
-        """Delete an approval once its call has run, so it cannot be replayed."""
-        await self._redis.delete(self._key(approval_id))
-
-    # ── internals ─────────────────────────────────────────────────────────
-    async def _load(self, approval_id: str) -> PendingApproval:
-        raw = await self._redis.get(self._key(approval_id))
-        if raw is None:
-            raise PolicyError("approval_not_found", retryable=False)
         return PendingApproval(**json.loads(raw))
 
-    async def _save(self, approval: PendingApproval, add_approver: str | None = None) -> None:
-        if add_approver:
-            approval.approver = add_approver
-        payload = asdict(approval)
-        await self._redis.set(self._key(approval.id), json.dumps(payload), ex=APPROVAL_TTL_SECONDS)
+    async def _remaining_ttl(self, approval_id: str) -> int:
+        ttl = await self._redis.ttl(self._key(approval_id))
+        return ttl if ttl and ttl > 0 else 1
 
     @staticmethod
     def _key(approval_id: str) -> str:
         return f"scout:approval:{approval_id}"
+
+    @classmethod
+    def _decision_key(cls, approval_id: str) -> str:
+        return f"{cls._key(approval_id)}:decision"
+
+    @classmethod
+    def _claim_key(cls, approval_id: str) -> str:
+        return f"{cls._key(approval_id)}:claim"

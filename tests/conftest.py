@@ -45,6 +45,7 @@ PG, ES, VEC = "tool:postgres:read", "tool:elasticsearch:read", "tool:vector:read
 TOKENS = {
     "support": principal(scopes=(PG, ES, VEC), roles=("role:support_copilot",)),
     "analyst": principal(scopes=(PG,), roles=("role:analyst",)),
+    "fetcher": principal(scopes=("tool:http:fetch",), roles=("role:support_copilot",)),
     "noscope": principal(scopes=(), roles=("role:support_copilot",)),
     "writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",)),
     # Reviewers hold approval:review and are a different subject from the writer.
@@ -61,15 +62,25 @@ class FakeRedis:
 
     def __init__(self):
         self.data: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
 
-    async def set(self, key, value, ex=None):
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.data:
+            return None
         self.data[key] = value
+        if ex is not None:
+            self.ttls[key] = ex
+        return True
 
     async def get(self, key):
         return self.data.get(key)
 
+    async def ttl(self, key):
+        return self.ttls.get(key, -1) if key in self.data else -2
+
     async def delete(self, key):
         self.data.pop(key, None)
+        self.ttls.pop(key, None)
 
     async def ping(self):
         return True

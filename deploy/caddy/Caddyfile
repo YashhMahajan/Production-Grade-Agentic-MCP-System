@@ -31,7 +31,7 @@ https://localhost:8443 {
 		max_size 1MB
 	}
 
-	@public path /mcp /approvals/* /.well-known/mcp-server /healthz
+	@public path /mcp /approvals/* /.well-known/mcp-server /.well-known/oauth-protected-resource /healthz
 	handle @public {
 		reverse_proxy scout-mcp:8080
 	}

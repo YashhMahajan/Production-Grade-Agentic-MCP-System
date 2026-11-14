@@ -26,7 +26,10 @@ from scout_mcp.errors.framework import AuthError
 
 # healthz, /readyz, and /metrics must be unauthenticated because Kubernetes liveness probes and Prometheus scrapers do not carry tokens.
 
-_PUBLIC_PATHS = frozenset({"/.well-known/mcp-server", "/healthz", "/readyz", "/metrics"})
+_PUBLIC_PATHS = frozenset({
+    "/.well-known/mcp-server", "/.well-known/oauth-protected-resource",
+    "/healthz", "/readyz", "/metrics",
+})
 
 class AuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, settings: ServerSettings):
@@ -40,7 +43,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         header = request.headers.get("authorization", "")
         if not header.lower().startswith("bearer "):
-            return self._unauthenticated("missing_token")
+            return self._unauthenticated(request, "missing_token")
 
         bearer = header[7:].strip()
         try:
@@ -48,14 +51,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # cache is cold or expired, so validate off the event loop.
             principal = await asyncio.to_thread(self.validator.validate, bearer)
         except AuthError as exc:
-            return self._unauthenticated(exc.code)
+            return self._unauthenticated(request, exc.code)
 
         # Attach to request state so downstream handlers can read identity.
         request.state.principal = principal
         return await call_next(request)
 
     # Without this, hosts like local IDEs would just fails, and we dont want that because it becomes difficult to troubleshoot afterwards sp we add if before only.
-    def _unauthenticated(self, error_code: str) -> JSONResponse:
+    def _unauthenticated(self, request: Request, error_code: str) -> JSONResponse:
+        base = (self.settings.public_url or str(request.base_url)).rstrip("/")
         return JSONResponse(
             {"error": error_code},
             # If validation fails, we return a 401 with a proper WWW-Authenticate header so MCP hosts can trigger their OAuth flow
@@ -64,7 +68,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 "WWW-Authenticate": (
                     f'Bearer realm="{self.settings.auth_audience}", '
                     f'error="{error_code}", '
-                    f'authorization_uri="{self.settings.auth_issuer}"'
+                    f'authorization_uri="{self.settings.auth_issuer}", '
+                    f'resource_metadata="{base}/.well-known/oauth-protected-resource"'
                 )
             },
         )

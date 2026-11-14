@@ -113,6 +113,14 @@ class Tool(ABC):
         blob = json.dumps(payload, sort_keys=True, default=str).encode()
         return f"scout:{self.meta.name}:{hashlib.sha256(blob).hexdigest()[:24]}"
 
+    def needs_approval(self, args: BaseModel) -> bool:
+        """Whether this call, with these arguments, waits for a human.
+
+        Defaults to the tool's ``destructive`` flag. A tool whose effect depends on
+        its arguments (``http.fetch``: GET reads, DELETE does not) overrides it.
+        """
+        return self.meta.destructive
+
     @property
     def cacheable(self) -> bool:
         return self.meta.cacheable

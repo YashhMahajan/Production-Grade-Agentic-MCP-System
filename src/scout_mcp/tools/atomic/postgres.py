@@ -29,6 +29,16 @@ _FORBIDDEN_KEYWORDS = (
     "CREATE", "GRANT", "REVOKE", "COPY", "CALL", "EXECUTE",
 )
 
+# The tenant is a session setting that the row-level-security policies read. A query
+# that can call set_config() could point it at another tenant, so these are refused,
+# along with syntax that hides an identifier from this check: quoted identifiers,
+# dollar quoting and comments.
+_UNSAFE_FUNCTIONS = re.compile(
+    r"\b(set_config|current_setting|pg_\w+|dblink\w*|lo_\w+|\w+_to_xml\w*|nextval|setval)\b",
+    re.IGNORECASE,
+)
+_HIDING_SYNTAX = re.compile(r'"|--|/\*|\$[A-Za-z_]*\$')
+_FORBIDDEN_RE = re.compile(r"\b(" + "|".join(_FORBIDDEN_KEYWORDS) + r")\b")
 _TABLE_RE = re.compile(r"\bFROM\s+([A-Za-z_][\w.]*)", re.IGNORECASE)
 _WORD_RE = re.compile(r"[a-z_][a-z0-9_]*")
 
@@ -48,10 +58,16 @@ class PostgresQueryInput(BaseModel):
         if head not in {"SELECT", "WITH"}:
             raise ValueError("only SELECT or WITH statements are permitted")
         upper = stripped.upper()
-        for kw in _FORBIDDEN_KEYWORDS:
-            # Word-boundary check: "UPDATE_TS" is allowed, "UPDATE " is not.
-            if f" {kw} " in f" {upper} " or upper.startswith(f"{kw} "):
-                raise ValueError(f"forbidden keyword: {kw}")
+        # Word boundaries, so "UPDATE_TS" and "created_at" pass but "UPDATE" does not, and a
+        # newline or tab in front of the keyword does not hide it.
+        if m := _FORBIDDEN_RE.search(upper):
+            raise ValueError(f"forbidden keyword: {m.group(1)}")
+        if m := _UNSAFE_FUNCTIONS.search(stripped):
+            raise ValueError(f"function not permitted: {m.group(1)}")
+        if _HIDING_SYNTAX.search(stripped):
+            raise ValueError(
+                "quoted identifiers, dollar quoting and comments are not permitted"
+            )
         # Reject multiple statements.
         if ";" in stripped:
             raise ValueError("only one statement per call")

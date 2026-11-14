@@ -86,11 +86,19 @@ class TokenValidator:
 
         # MCP-specific claims. The authorization server populates these during
         # the consent flow — they travel with the token as agent metadata.
+        tenant = claims.get("tenant")
+        if not tenant or not isinstance(tenant, str):
+            if self.settings.require_tenant:
+                # Falling back to a shared "default" tenant would put a token the
+                # issuer forgot to scope into whatever data that tenant holds.
+                raise AuthError("missing_tenant", retryable=False,
+                                hint="the token has no tenant claim")
+            tenant = "default"
         scopes = claims.get("scope", "")
         return Principal(
             subject=claims["sub"],
             delegator=claims.get("act", {}).get("sub"),  # RFC 8693 actor claim
-            tenant=claims.get("tenant", "default"),
+            tenant=tenant,
             scopes=frozenset(scopes.split() if isinstance(scopes, str) else scopes),
             token_id=claims["jti"],
             issued_at=claims["iat"],

@@ -23,10 +23,11 @@ from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.config import get_settings
 from scout_mcp.errors.framework import UpstreamError
 from scout_mcp.tools.base import Tool, ToolLevel, ToolMetadata
+from scout_mcp.validation.schemas import COLLECTION_NAME
 
 
 class VectorSearchInput(BaseModel):
-    collection: str = Field(..., description="Qdrant collection name.")
+    collection: str = Field(..., pattern=COLLECTION_NAME, description="Qdrant collection name.")
     vector: list[float] = Field(..., min_length=1, description="Query embedding.")
     top_k: int = Field(10, ge=1, le=100)
     filter: dict[str, Any] | None = Field(default=None, description="Qdrant filter object.")

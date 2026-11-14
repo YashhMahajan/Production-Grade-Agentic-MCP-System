@@ -14,6 +14,12 @@ from dataclasses import dataclass
 from typing import Any
 
 
+# Names that end up inside a URL path or an index expression. Anything outside these
+# patterns ("../x", "a?b", ".security") could steer the request at another endpoint.
+COLLECTION_NAME = r"^[A-Za-z0-9_\-]{1,64}$"
+INDEX_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_\-*]{0,127}$"
+
+
 # slots=True makes it memory-efficient, which matters when you are processing thousands of calls per second.
 @dataclass(frozen=True, slots=True)
 class ToolCallEnvelope:

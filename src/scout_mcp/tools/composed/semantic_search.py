@@ -20,6 +20,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
+from scout_mcp.validation.schemas import COLLECTION_NAME
+
 from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.tools.atomic.embeddings import get_embedder
 from scout_mcp.tools.atomic.postgres import PostgresQueryInput, PostgresQueryTool
@@ -29,7 +31,7 @@ from scout_mcp.tools.base import Tool, ToolLevel, ToolMetadata
 
 class SemanticSearchInput(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
-    collection: str = Field(..., description="Vector collection to search.")
+    collection: str = Field(..., pattern=COLLECTION_NAME, description="Vector collection to search.")
     top_k: int = Field(5, ge=1, le=25)
     hydrate_from_postgres: bool = Field(
         True, description="If true, fetch full document bodies by id from Postgres."

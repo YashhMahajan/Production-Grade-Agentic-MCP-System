@@ -23,6 +23,12 @@ class ServerSettings(BaseSettings):
     http_port: int = 8080
     # stateless_mode matters for horizontal scaling — see the 2026 MCP roadmap.
     stateless_mode: bool = True
+    # Browser origins allowed to call /mcp. Empty means no browser origin is allowed;
+    # clients that send no Origin header (agents, CLIs, SDKs) are never affected.
+    allowed_origins: list[str] = []
+    # The address clients use to reach this server, for the protected-resource
+    # metadata. Unset means "work it out from the request".
+    public_url: str | None = None
     # Tenant used when there is no token to read one from (stdio transport only).
     tenant: str = "default"
 

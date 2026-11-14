@@ -20,12 +20,13 @@ from scout_mcp.tools.atomic.elasticsearch import ElasticsearchSearchInput, Elast
 from scout_mcp.tools.atomic.embeddings import get_embedder
 from scout_mcp.tools.atomic.vector_search import VectorSearchInput, VectorSearchTool
 from scout_mcp.tools.base import Tool, ToolLevel, ToolMetadata
+from scout_mcp.validation.schemas import COLLECTION_NAME, INDEX_PATTERN
 
 
 class HybridSearchInput(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
-    es_index: str = Field(..., description="Elasticsearch index pattern.")
-    vector_collection: str = Field(..., description="Qdrant collection.")
+    es_index: str = Field(..., pattern=INDEX_PATTERN, description="Elasticsearch index pattern.")
+    vector_collection: str = Field(..., pattern=COLLECTION_NAME, description="Qdrant collection.")
     top_k: int = Field(10, ge=1, le=50)
     # Classic RRF tuning knob. 60 is the canonical default from the original paper.
     rrf_k: int = Field(60, ge=10, le=200)

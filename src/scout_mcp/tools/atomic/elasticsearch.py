@@ -11,10 +11,11 @@ from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.config import get_settings
 from scout_mcp.errors.framework import UpstreamError
 from scout_mcp.tools.base import Tool, ToolLevel, ToolMetadata
+from scout_mcp.validation.schemas import INDEX_PATTERN
 
 
 class ElasticsearchSearchInput(BaseModel):
-    index: str = Field(..., description="Index or index pattern.")
+    index: str = Field(..., pattern=INDEX_PATTERN, description="Index or index pattern.")
     query: dict = Field(..., description="Elasticsearch DSL query body.")
     size: int = Field(20, ge=1, le=200)
     fields: list[str] | None = Field(default=None)

@@ -26,7 +26,10 @@ from starlette.responses import JSONResponse
 from scout_mcp.config import ServerSettings
 
 
-_EXEMPT_PATHS = frozenset({"/.well-known/mcp-server", "/healthz", "/readyz", "/metrics"})
+_EXEMPT_PATHS = frozenset({
+    "/.well-known/mcp-server", "/.well-known/oauth-protected-resource",
+    "/healthz", "/readyz", "/metrics",
+})
 
 
 class TenantMiddleware(BaseHTTPMiddleware):

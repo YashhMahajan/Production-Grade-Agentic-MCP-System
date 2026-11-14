@@ -63,7 +63,7 @@ class HTTPFetchTool(Tool):
         description="Make an outbound HTTPS request to an allowlisted domain.",
         level=ToolLevel.ATOMIC,
         scopes_required=("tool:http:fetch",),
-        destructive=False,  # destructiveness depends on the target, not our tool.
+        destructive=False,  # per call: see needs_approval (only GET runs without approval)
         cacheable=False,  # network side effects — never cache.
         timeout_ms=15_000,
         tags=("http", "network"),
@@ -74,6 +74,10 @@ class HTTPFetchTool(Tool):
         super().__init__(policy)
         self.settings = get_settings()
         self._allowlist = _load_allowlist()
+
+    def needs_approval(self, args: HTTPFetchInput) -> bool:  # type: ignore[override]
+        # A GET reads. Anything else can change state on an allowlisted host.
+        return args.method != "GET"
 
     def _allowed(self, tenant: str, host: str) -> bool:
         per_tenant = self._allowlist.get(tenant, []) or []
