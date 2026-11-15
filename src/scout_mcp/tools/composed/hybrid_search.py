@@ -96,7 +96,10 @@ class HybridSearchTool(Tool):
 
         # Build (id → rank) maps.
         lexical_ranks = {hit["id"]: rank for rank, hit in enumerate(es_result["hits"], start=1)}
-        dense_ranks = {str(m["doc_id"]): rank for rank, m in enumerate(vs_result["matches"], start=1)}
+        # A document cut into chunks can match more than once. Its best chunk sets its rank.
+        dense_ranks: dict[str, int] = {}
+        for rank, m in enumerate(vs_result["matches"], start=1):
+            dense_ranks.setdefault(str(m["doc_id"]), rank)
 
         # Fuse with RRF.
         all_ids = set(lexical_ranks) | set(dense_ranks)

@@ -93,8 +93,18 @@ jobs:
       - name: Seed demo data
         run: docker compose --profile seed run --rm seed
 
+      - name: Ingest a document for acme into its own index and collection
+        run: |
+          docker compose --profile seed run --rm --entrypoint scout-mcp seed \
+            ingest --tenant acme --collection ingest_demo --index ingest_demo /seed/sample/warranty.md
+          # A second run of the same file must embed nothing.
+          docker compose --profile seed run --rm --entrypoint scout-mcp seed \
+            ingest --tenant acme --collection ingest_demo --index ingest_demo /seed/sample/warranty.md \
+            | tee ingest-again.txt
+          grep -q "0 chunks embedded; 1 unchanged and skipped" ingest-again.txt
+
       - name: End-to-end tests
-        run: SCOUT_E2E=1 pytest tests/e2e -v --junitxml=e2e-results.xml
+        run: SCOUT_E2E=1 SCOUT_E2E_INGESTED=1 pytest tests/e2e -v --junitxml=e2e-results.xml
 
       - name: Raise rate limits so the benchmark measures the stack, not the limiter
         run: |

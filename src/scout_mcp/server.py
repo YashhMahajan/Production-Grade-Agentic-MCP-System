@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 
 import uvicorn
+from elasticsearch import AsyncElasticsearch
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, ListToolsResult, TextContent
@@ -415,6 +416,8 @@ class ScoutServer:
         )
         await self.registry.discover(policy)
         await self._preload_embedder()
+        if self.settings.check_embedding_model:
+            await self._check_embedding_model()
         self.ready = True
         logger.info("scout-mcp ready", extra={"tools": len(self.registry)})
 
@@ -426,6 +429,26 @@ class ScoutServer:
             await asyncio.to_thread(get_embedder)
         except Exception:
             logger.exception("embedding model failed to load; search tools will fail")
+
+    async def _check_embedding_model(self) -> None:
+        """Warn if the documents were embedded with another model. Never stops the server."""
+        from scout_mcp.ingest import DEFAULT_COLLECTION, embedding_mismatch
+
+        password = self.settings.elasticsearch_password
+        es = AsyncElasticsearch(
+            self.settings.elasticsearch_url,
+            basic_auth=(self.settings.elasticsearch_user, password) if password else None,
+            request_timeout=3, max_retries=0,
+        )
+        try:
+            warning = await embedding_mismatch(es, DEFAULT_COLLECTION, self.settings.embedding_model)
+        except Exception as exc:
+            logger.warning("could not check which embedding model the documents use: %s", exc)
+            return
+        finally:
+            await es.close()
+        if warning:
+            logger.warning(warning)
 
     async def shutdown(self) -> None:
         self.ready = False

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import socket
 import time
 
@@ -341,3 +342,17 @@ def test_no_service_is_unhealthy():
     bad = [r["Service"] for r in rows if r.get("Health") not in ("", "healthy")]
     assert not bad, bad
     assert len(rows) >= 12, [r["Service"] for r in rows]
+
+
+# ── Ingest ────────────────────────────────────────────────────────────────
+@pytest.mark.skipif(os.environ.get("SCOUT_E2E_INGESTED") != "1",
+                    reason="CI ingests deploy/seed/sample/warranty.md for acme first")
+async def test_an_ingested_document_is_found_by_its_tenant_and_nobody_else(acme, globex):
+    # Written by `scout-mcp ingest` as the scout_ingest role, read back through row-level
+    # security: the title and body come from the Postgres row, the match from Qdrant.
+    ask = {"query": "how long is the blender warranty", "collection": "ingest_demo", "top_k": 3}
+    mine = value(await acme.call_tool("semantic_search", ask))
+    top = mine["results"][0]
+    assert top["id"] == "doc_acme_warranty" and top["title"] == "Blender warranty"
+    assert "24 month" in top["body"]
+    assert value(await globex.call_tool("semantic_search", ask))["results"] == []

@@ -121,6 +121,7 @@ async def app_client(monkeypatch, tmp_path):
         policy_file=str(ROOT / "config" / "policy.yaml"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
         retry_base_delay_ms=1,
+        check_embedding_model=False,
     )
     server = ScoutServer(settings)
     app = build_http_app(server)

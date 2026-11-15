@@ -102,6 +102,8 @@ class ServerSettings(BaseSettings):
     # retrieval (54.29 vs 53.25) for 3x the parameters and ~2.5x the latency.
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     embedding_cache_dir: str | None = None
+    # At startup, warn if the documents were embedded with a different model than this one.
+    check_embedding_model: bool = True
 
     def production_problems(self) -> list[str]:
         """Development settings that must not reach production. Empty means none found."""

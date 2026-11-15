@@ -8,18 +8,24 @@ seconds and in CI.
     scout-mcp policy check --subject role:support_copilot --tenant acme \\
         --action tool:s3:read --resource docs/a.txt
     scout-mcp new-tool weather.lookup          # a plugin package that already meets the tool contract
+    scout-mcp ingest --tenant acme docs/*.md   # chunk, embed and write documents for one tenant
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
 import yaml
 
 from scout_mcp.auth.policy import Decision, PolicyEngine
+from scout_mcp.ingest import (
+    DEFAULT_COLLECTION, DEFAULT_INDEX, IngestError, documents_from_files, ingest_documents,
+)
 from scout_mcp.scaffold import ScaffoldError, scaffold_tool
 
 DEFAULT_POLICY = "config/policy.yaml"
@@ -80,6 +86,26 @@ def _new_tool(args: argparse.Namespace) -> int:
     return 0
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _ingest(args: argparse.Namespace) -> int:
+    try:
+        documents = documents_from_files(args.tenant, [Path(f) for f in args.files])
+        report = asyncio.run(ingest_documents(
+            documents, collection=args.collection, index=args.index, force=args.force))
+    except IngestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"{_plural(report.documents, 'document')} written, {_plural(report.chunks, 'chunk')} embedded; "
+          f"{report.skipped} unchanged and skipped, {report.stale_deleted} stale chunks removed")
+    if not os.environ.get("SCOUT_INGEST_POSTGRES_DSN"):
+        print("note: Postgres was not written. Set SCOUT_INGEST_POSTGRES_DSN to a role that can write "
+              "documents; without the row, search results come back without a title and body.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="scout-mcp", description="Scout MCP server and tools.")
     sub = parser.add_subparsers(dest="command")
@@ -106,6 +132,14 @@ def build_parser() -> argparse.ArgumentParser:
     new_tool.add_argument("name", help="lower case, such as weather or weather.lookup")
     new_tool.add_argument("--dir", default=".", help="where to create the package directory")
     new_tool.set_defaults(run=_new_tool)
+
+    ingest = sub.add_parser("ingest", help="chunk, embed and write documents for one tenant")
+    ingest.add_argument("--tenant", required=True)
+    ingest.add_argument("files", nargs="+", help=".md or .txt files")
+    ingest.add_argument("--collection", default=DEFAULT_COLLECTION, help="Qdrant collection")
+    ingest.add_argument("--index", default=DEFAULT_INDEX, help="Elasticsearch index")
+    ingest.add_argument("--force", action="store_true", help="re-embed documents that have not changed")
+    ingest.set_defaults(run=_ingest)
     return parser
 
 
