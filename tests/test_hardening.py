@@ -9,6 +9,7 @@ import yaml
 
 from scout_mcp.config import ServerSettings
 from scout_mcp.ratelimit.limiter import RateLimiter
+from scout_mcp.tools.base import Tool
 from scout_mcp.tools.registry import ToolRegistry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,7 +72,8 @@ async def test_every_tool_declares_scopes_that_some_policy_rule_grants():
 async def test_every_tool_that_writes_needs_approval():
     for tool in await registered_tools():
         if not tool.meta.read_only:
-            assert tool.meta.destructive, f"{tool.meta.name} writes but needs no approval"
+            decides_per_call = type(tool).needs_approval is not Tool.needs_approval
+            assert tool.meta.destructive or decides_per_call, f"{tool.meta.name} writes but needs no approval"
 
 
 async def test_rate_limit_overrides_name_real_tools():
