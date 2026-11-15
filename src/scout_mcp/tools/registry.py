@@ -158,6 +158,7 @@ def _to_mcp_spec(tool: Tool) -> MCPToolSpec:
         name=meta.name,
         description=description,
         inputSchema=tool.input_schema.model_json_schema(),
+        outputSchema=tool.output_schema.model_json_schema() if tool.output_schema else None,
         annotations=ToolAnnotations(
             readOnlyHint=meta.read_only,
             # Only meaningful when the tool is not read-only. Anything that writes or

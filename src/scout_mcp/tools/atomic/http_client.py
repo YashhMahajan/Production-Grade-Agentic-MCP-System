@@ -57,6 +57,13 @@ class HTTPFetchInput(BaseModel):
         return upper
 
 
+class HTTPFetchOutput(BaseModel):
+    status: int
+    headers: dict[str, str]
+    body: str
+    truncated: bool
+
+
 class HTTPFetchTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="http.fetch",
@@ -72,6 +79,7 @@ class HTTPFetchTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = HTTPFetchInput
+    output_schema: ClassVar[type[BaseModel] | None] = HTTPFetchOutput
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)

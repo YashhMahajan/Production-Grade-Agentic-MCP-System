@@ -293,6 +293,7 @@ class ScoutServer:
         # Backends return datetimes, UUIDs and Decimals, which the MCP SDK cannot encode.
         # Normalise once here so the response and the cache hold the same plain JSON.
         result = json.loads(json.dumps(result, default=str))
+        tool.check_output(result)
         # A result that says part of it failed is not stored: one backend blip would
         # otherwise be served to every caller until the entry expires.
         if tool.cacheable and not result.get("partial_errors"):

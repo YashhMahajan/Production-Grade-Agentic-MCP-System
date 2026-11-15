@@ -29,6 +29,12 @@ class S3GetInput(BaseModel):
     max_bytes: int = Field(1_048_576, ge=1, le=10_485_760)  # 1 MiB default, 10 MiB ceiling
 
 
+class S3GetOutput(BaseModel):
+    key: str
+    size_bytes: int
+    content: str
+
+
 class S3GetTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="s3.get_object",
@@ -42,6 +48,7 @@ class S3GetTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = S3GetInput
+    output_schema: ClassVar[type[BaseModel] | None] = S3GetOutput
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)
@@ -80,6 +87,11 @@ class S3PutInput(BaseModel):
     content_type: str = Field("text/plain", description="MIME type for the uploaded object.")
 
 
+class S3PutOutput(BaseModel):
+    key: str
+    bytes_written: int
+
+
 class S3PutTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="s3.put_object",
@@ -93,6 +105,7 @@ class S3PutTool(Tool):
         read_only=False,
     )
     input_schema: ClassVar[type[BaseModel]] = S3PutInput
+    output_schema: ClassVar[type[BaseModel] | None] = S3PutOutput
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)

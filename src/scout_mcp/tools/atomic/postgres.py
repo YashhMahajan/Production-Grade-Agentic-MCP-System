@@ -74,6 +74,13 @@ class PostgresQueryInput(BaseModel):
         return stripped
 
 
+class PostgresQueryOutput(BaseModel):
+    columns: list[str]
+    rows: list[dict[str, Any]]
+    row_count: int
+    truncated: bool
+
+
 class PostgresQueryTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="postgres.query",
@@ -88,6 +95,7 @@ class PostgresQueryTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = PostgresQueryInput
+    output_schema: ClassVar[type[BaseModel] | None] = PostgresQueryOutput
 
     # The _pool is a class variable, not an instance variable. 
     # This is deliberate. We want a single shared connection pool across all PostgresQueryTool instances because opening a new pool per instance would blow up our Postgres connection limit.
