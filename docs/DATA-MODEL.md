@@ -17,8 +17,8 @@ Tables: `customers`, `orders`, `documents`. All have `tenant_id TEXT NOT NULL`.
 Isolation:
 
 - RLS is enabled and **forced** on all three. Policy: `tenant_id = current_setting('app.tenant_id', true)`. If the setting is missing the comparison is NULL and no rows come back.
-- Two roles. `scout` (the compose superuser) creates the schema. `scout_app` has `SELECT` on the three tables, `NOSUPERUSER NOBYPASSRLS`. The server must connect as `scout_app`: superusers skip RLS entirely.
-- `postgres.query` runs in a read-only transaction and calls `set_config('app.tenant_id', $1, true)` first. The `true` makes it transaction-local.
+- Three roles. `scout` (the compose superuser) creates the schema. `scout_app` has `SELECT` on the three tables, `NOSUPERUSER NOBYPASSRLS`. The server must connect as `scout_app`: superusers skip RLS entirely. `scout_ingest` has `SELECT, INSERT, UPDATE` on `documents` and nothing else, also `NOBYPASSRLS`; only `scout-mcp ingest` uses it, through `SCOUT_INGEST_POSTGRES_DSN`, and it sets `app.tenant_id` before it writes.
+- `postgres.query` and `postgres.describe` run in a read-only transaction and call `set_config('app.tenant_id', $1, true)` first. The `true` makes it transaction-local. `postgres.describe` reads `information_schema.columns` (which lists only tables the role can read) and `pg_constraint` for foreign keys (`information_schema` hides constraints on tables the role does not own).
 
 ## Tokens (Keycloak)
 
@@ -33,14 +33,17 @@ What the server reads from a verified access token:
 | `aud` | Must include `scout-mcp` |
 | `act.sub` | Optional: the human who delegated to the agent, recorded as `delegator` |
 
-Realm clients: `copilot-acme`, `copilot-globex` (read scopes), `writer-acme` (`s3` read and write), `reviewer-acme` (`approval:review`). Their secrets in the realm file are for development.
+An agent's `roles` and `tenant` are hard-coded claims on its client. A person's token comes from `scout-human`: `tenant` is the user's `tenant` attribute and `roles` is a list of their realm roles with the prefix `role:`. `sub` is their Keycloak id and there is no `act`.
+
+Realm clients: `copilot-acme`, `copilot-globex` (read scopes), `writer-acme` (`s3` read and write), `reviewer-acme` (`approval:review`, `role:reviewer`), and `scout-human` (public, PKCE). Users: `ana` (acme, `human_agent`), `rae` (acme, `reviewer`), `gus` (globex, `human_agent`). Their secrets and passwords in the realm file are for development.
 
 ## Elasticsearch
 
 | Index | Fields | Notes |
 |-------|--------|-------|
 | `tickets` | `customer_id` (keyword), `status` (keyword), `priority` (keyword), `subject` (text), `created_at` (date), `_tenant` (keyword) | `status` is `open` or `pending` in the seed data |
-| `documents` | `title` (text), `body` (text), `_tenant` (keyword) | mirror of the Postgres `documents` rows, `_id` is the document id |
+| `documents` | `title` (text), `body` (text), `_tenant` (keyword), `_sha` (keyword) | mirror of the Postgres `documents` rows, `_id` is the document id. `_sha` is the hash of the content ingest last wrote, and is written last |
+| `scout_meta` | `model`, `dim` | one document per collection, `embedding-<collection>`: which model embedded it |
 
 `_tenant`, `customer_id` and `status` must be mapped as `keyword`. With the default dynamic mapping they become analysed text, exact `term` queries stop matching, and a `term` filter on `_tenant: acme` also matches a tenant called `acme-corp`. `deploy/seed/seed.py` creates the indices with explicit mappings; do the same in any real index.
 
@@ -48,13 +51,14 @@ The tool wraps every query: `bool.must = [caller query]`, `bool.filter = [term _
 
 ## Qdrant
 
-One collection, `support_docs`: cosine distance, 768 dimensions (bge-base-en-v1.5). Point ids are UUIDs derived from the document id, because Qdrant only accepts integers or UUIDs. Payload:
+One collection, `support_docs`: cosine distance, 768 dimensions (bge-base-en-v1.5). A document is cut into chunks, one point each. Point ids are UUIDs derived from the tenant, the document id and the chunk number, because Qdrant only accepts integers or UUIDs and two tenants must never share one. Payload:
 
 | Field | Meaning |
 |-------|---------|
 | `doc_id` | The Postgres and Elasticsearch document id. Composed tools join on this. |
+| `chunk` | The chunk number within the document. Ingest removes this tenant's chunks at or above the new count when a document gets shorter. |
 | `tenant` | Pinned by a mandatory `must` clause on every search. |
-| `title`, `text` | For previews without a database round trip. |
+| `title`, `text` | For previews without a database round trip. `text` is the chunk, not the whole document. |
 
 Every request carries the `api-key` header. Changing the embedding model changes the dimension. Re-run the seed script and re-embed any real data, or searches return noise.
 
@@ -67,6 +71,7 @@ Password required. Memory capped at 256 MB with `volatile-lru`, no snapshots: ev
 | `scout:<tool>:<24 hex>` | cached tool result, hash of tool + tenant + arguments | per tool, L2 default 600 s |
 | `scout:rl:<tenant>:<tool>` | token bucket: `tokens`, `last_ms` | 3600 s |
 | `scout:approval:<id>` | pending approval: tenant, caller, delegator, tool, arguments, state, approver | 3600 s, deleted when used |
+| `scout:approvals:<tenant>` | sorted set of that tenant's request ids, scored by expiry time (the inbox) | 3600 s; entries pruned on read and removed when decided |
 | `<cache key>:lock` | stampede lock | 5 s |
 
 ## S3 (SeaweedFS in compose)

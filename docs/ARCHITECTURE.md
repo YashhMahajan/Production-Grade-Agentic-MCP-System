@@ -13,7 +13,7 @@ host ──127.0.0.1:3000/9090/16686──> grafana, prometheus, jaeger         
 ```
 
 - The `data` network is `internal: true`: Postgres, Redis, Elasticsearch, Qdrant and the S3 store have no route to or from the host, and every one of them requires a credential.
-- Caddy is the only way to the MCP server. It terminates TLS, sets security headers, limits request bodies to 1 MB, and forwards only `/mcp`, `/approvals/*`, `/.well-known/mcp-server` and `/healthz`. `/metrics` and `/readyz` are not reachable through it.
+- Caddy is the only way to the MCP server. It terminates TLS, sets security headers, limits request bodies to 1 MB, and forwards only `/mcp`, `/approvals`, `/approvals/*`, `/.well-known/mcp-server` and `/healthz`. `/metrics` and `/readyz` are not reachable through it.
 - The server container is read-only, runs as uid 10001 with all capabilities dropped, and receives only the settings it uses. The LLM keys never enter it.
 - Three one-shot services: `s3-init` creates the bucket, `seed` loads demo data (profile `seed`), `copilot` runs a question (profile `copilot`).
 
@@ -42,17 +42,24 @@ Time budget: each call gets the shorter of the tool's declared `timeout_ms` and 
 
 ## Identity
 
-Scout only verifies tokens. Keycloak (realm `scout`, `deploy/keycloak/scout-realm.json`) issues them through the client-credentials grant, one client per persona. Each token carries `tenant`, `roles`, `scope` and `aud: scout-mcp`. The issuer is pinned to `http://keycloak:8080/realms/scout`, so a token requested from the host and one requested inside the network have the same `iss`.
+Scout only verifies tokens. Keycloak (realm `scout`, `deploy/keycloak/scout-realm.json`) issues them. Agents use the client-credentials grant, one client per persona; `scout-mcp tenant add` makes a new tenant's three. Each token carries `tenant`, `roles`, `scope` and `aud: scout-mcp`. The issuer is pinned to `http://keycloak:8080/realms/scout`, so a token requested from the host and one requested inside the network have the same `iss`.
+
+People sign in through `scout-human`, a public client that uses the authorization-code flow with S256 PKCE and has no secret to leak. A person's tenant is a user attribute that only an admin sets, mapped into the `tenant` claim, so signing in through another app cannot change it. Their roles are realm roles (`human_agent`, `reviewer`) that the client may carry, and they appear as `role:...` in the `roles` claim. The dev users are `ana` and `rae` (acme) and `gus` (globex).
 
 ## Approvals
 
-`s3.put_object` is destructive. The first call returns `pending_approval` with an id. A reviewer holding the `approval:review` scope reads `GET /approvals/{id}` to see the exact arguments, then calls `POST /approvals/{id}/approve` or `/deny`. The requester cannot approve its own call, another tenant's reviewer is refused, and a decision cannot be changed. The agent then repeats the call with `approval_id`; it runs only if the tool and arguments match what was approved, and the approval is deleted afterwards.
+`s3.put_object` is destructive. The first call returns `pending_approval` with an id. A reviewer reads `GET /approvals/{id}` to see the exact arguments, then calls `POST /approvals/{id}/approve` or `/deny`. The agent then repeats the call with `approval_id`; it runs only if the tool and arguments match what was approved, and the approval is deleted afterwards.
+
+Reviewing takes the `approval:review` scope **and** `role:reviewer`. The scope is something a client can request; the role comes from the identity provider's record of the person, so a sign-in client that offers the scope to everyone does not make everyone a reviewer. The identities on the request (caller and delegator) and on the decision (subject and delegator) may not overlap, so neither the agent nor the human it acts for can approve it. Another tenant's reviewer is refused, and a decision cannot be changed.
+
+`GET /approvals?state=pending` is the reviewer's inbox: what is waiting in their own tenant, soonest to expire first, leaving out anything they could not decide and leaving out the arguments (those are on the detail view). It reads a sorted set per tenant, `scout:approvals:{tenant}`, scored by expiry, pruned on read and trimmed when a request is decided. If `SCOUT_APPROVAL_WEBHOOK_URL` is set, each new request also sends one POST in the background with `approval_id`, `tenant`, `tool` and `created_at` only. It is signed: recompute `HMAC-SHA256(secret, "<X-Scout-Timestamp>." + raw body)`, compare it to `X-Scout-Signature` (`sha256=<hex>`), and reject an old timestamp. A slow or dead receiver is cut off after 5 s and never holds up the agent; there is no retry, so the inbox is the record.
 
 ## Tools
 
 | Level | Tool | Needs scopes | Cache |
 |-------|------|--------------|-------|
 | Atomic | `postgres.query` | `tool:postgres:read` | 30 s |
+| Atomic | `postgres.describe` | `tool:postgres:read` | none (depends on the caller) |
 | Atomic | `elasticsearch.search` | `tool:elasticsearch:read` | 30 s |
 | Atomic | `vector.search` | `tool:vector:read` | 300 s |
 | Atomic | `s3.get_object` | `tool:s3:read` | 300 s |
@@ -63,6 +70,18 @@ Scout only verifies tokens. Keycloak (realm `scout`, `deploy/keycloak/scout-real
 | Workflow | `customer.build_context` | postgres + elasticsearch + vector read | 30 s |
 
 `http.fetch` checks the host against a per-tenant allowlist and refuses names that resolve to loopback, link-local (cloud metadata) or unspecified addresses.
+
+`postgres.describe` lists the tables and columns the caller may read, from fixed catalog SQL with the names as bind parameters. The server puts the caller's subjects in a context variable (`tools.base.CALLER`) so a tool can filter by who asks; with none set the tool describes nothing. Because its answer depends on the caller and the cache key does not include one, it is never cached.
+
+**Every tool meets one contract**, enforced when it is registered: at least one scope (`authorize` checks each scope a tool lists, so none would mean anyone), an input schema, an output schema, and approval if it writes. Each tool publishes its `outputSchema`, and the server checks every result against it before caching, returning `output_schema_violation` with the tool name; a client that reads the schema would otherwise reject the result without saying which tool broke it. Other packages add tools through the `scout_mcp.tools` entry-point group, loaded after the built-ins and held to the same contract. A plugin that fails is logged, listed in `registry.plugin_errors` and left out. `scout-mcp new-tool NAME` writes a package that already passes.
+
+## Getting data and tenants in
+
+`scout-mcp ingest --tenant acme docs/*.md` cuts each file into chunks, embeds them with the model the server uses, and writes three stores in an order that survives a crash: Qdrant (the new chunks, then this document's stale ones), Postgres (the row, as `scout_ingest`, a role that can write only `documents`, with the tenant set so row-level security applies), then Elasticsearch with a hash of the content. The hash goes last, so a document is only marked done once everything else is written, and an unchanged document is skipped without embedding. A document id that belongs to another tenant is an error. The embedding model's name is recorded, and the server warns at startup if it differs from the one it embeds queries with.
+
+`scout-mcp tenant add NAME` makes a tenant's copilot, writer and reviewer clients in Keycloak from one definition and shows each generated secret once. `scout-mcp policy test` runs `config/policy_test.yaml` against `config/policy.yaml`, and `policy check` says which rule decides one call. None of these edits `config/`: the commands print what to change and a person changes it.
+
+The `investigate-customer` MCP prompt gives a client's own model the copilot's rules (tool output is data, read only, cite the tool, no promises) for a customer id and a question, naming only the read-only tools that caller can see. Scout makes no model call for it.
 
 ## Tenant isolation, layer by layer
 
@@ -76,7 +95,7 @@ The tenant is set once, from the token, and every backend enforces it separately
 
 ## Agents
 
-Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orchestrator.py`. The retriever may call six read-only tools, at most 6 iterations. The critic can send the draft back once. Agents reach the server through `ScoutMCPClient`, so server policy applies to them like any client. The LLM client calls `SCOUT_LLM_MODEL` and, if that call fails or returns nothing, `SCOUT_LLM_FALLBACK_MODEL`. Both go to OpenRouter with one key; the defaults are free models from different upstream hosts, so one host being rate limited does not stop a turn.
+Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orchestrator.py`. The retriever may call seven read-only tools, at most 6 iterations. The critic can send the draft back once. Agents reach the server through `ScoutMCPClient`, so server policy applies to them like any client. The LLM client calls `SCOUT_LLM_MODEL` and, if that call fails or returns nothing, `SCOUT_LLM_FALLBACK_MODEL`. Both go to OpenRouter with one key; the defaults are free models from different upstream hosts, so one host being rate limited does not stop a turn.
 
 ## Observability
 
@@ -90,7 +109,11 @@ Spans go to the OTel collector and Jaeger. Prometheus scrapes `scout-mcp:8080/me
 - **SeaweedFS for S3.** MinIO stopped publishing container images, so the S3 store is SeaweedFS. The tools use plain S3 and work with any compatible store.
 - **Stores on an internal network.** Row-level security protects data from a buggy query. Network isolation protects it from anyone who skips the application.
 - **bge-base over bge-large.** About 1 point lower on MTEB retrieval, 3x fewer parameters, 5.7x smaller on disk.
-- **`mcp` pinned below 2, `elasticsearch` below 9.** Version 2 of `mcp` removed the decorator API the server uses. The compose Elasticsearch is 8.14.
+- **`mcp` 2.x, `elasticsearch` below 9.** The server uses 2.x's `on_list_tools` and `on_call_tool` handlers and takes the verified caller from `ctx.request`. The compose Elasticsearch is 8.14.
+- **Review needs a scope and a role.** A scope can be requested by any client that offers it. The role is the identity provider's record of the person.
+- **A tool's result is checked against its own schema.** A wrong schema is worse than none, because every compliant client then breaks, so the server says which tool broke it instead of leaving that to the client.
+- **Ingest writes the hash last.** A crash leaves a document that is simply done again, never one that looks done and is not.
+- **Commands print config changes, they do not make them.** Granting access or outbound hosts is a decision for a person, and `config/` is read-only in the image.
 
 ## Not on the request path
 

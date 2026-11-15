@@ -13,6 +13,10 @@ I built Scout MCP to see what it takes to put an MCP server in front of real com
 - **Holds destructive calls for a human.** `s3.put_object` stays pending until a different identity approves that exact call. The approval works once.
 - **Protects itself.** Rate limits per tenant and tool, a two-level cache, per-tool circuit breakers, retries with backoff, and a time budget per call.
 - **Shows what happened.** One trace span and one audit line per call, Prometheus metrics, alert rules, and a Grafana dashboard.
+- **Says what each tool returns, and holds it to that.** Every tool publishes an output schema, and a call whose result does not fit it fails with the tool's name.
+- **Lets people in as well as agents.** People sign in with PKCE and carry their tenant and roles in the token. A reviewer needs the scope and the role, nobody approves a request they or their agent made, `GET /approvals?state=pending` lists what is waiting, and an optional signed webhook says a request arrived.
+- **Takes tools, documents and tenants without editing the server.** `scout-mcp new-tool`, `scout-mcp ingest` and `scout-mcp tenant add`, and `scout-mcp policy test` checks every policy rule against a case file.
+- **Works from a client's own model.** The `investigate-customer` prompt gives Claude Desktop, or any MCP client, the copilot's rules and only the tools that caller can see.
 
 ## Run it
 
@@ -88,11 +92,27 @@ Measured in CI on a shared 4-vCPU GitHub runner, three runs, through the TLS edg
 | `semantic_search` | 36 to 45 ms on a miss, 5 to 7 ms on a hit, 6.2 to 7.2x faster |
 | 16 concurrent clients | 134 to 199 requests/s, no errors in any run |
 | Whole stack memory | 2.2 to 2.3 GiB across 12 containers |
-| Request overhead with the backend faked, Apple M2 | 2.7 ms at p50, 3.3 to 3.9 ms at p95 |
+| Request overhead with the backend faked | 1.9 ms at p50, 2.1 to 2.5 ms at p95 (was 2.8 and 3.3 to 3.9 ms before the move to MCP SDK 2.x and the 0.4 fixes; I did not isolate which change did it) |
+| Output-schema check on every call | no measurable cost: p50 1.87 ms before, 1.86 ms after, one run each |
+| `postgres.describe` through the edge, real Postgres, never cached | 5.0 ms at p50, 6.2 ms at p95 (one CI run, 200 calls) |
+| Ingesting the same file twice | 1 chunk embedded the first time, 0 the second, in CI |
+| Tests | 293 in-process, 41 end-to-end against the real stack (120 and 33 when I started the 0.5 work) |
 | Container image | 1.06 GB, 0 fixable HIGH or CRITICAL vulnerabilities (was 4) |
 | Python environment without PyTorch | 463 MB, down from 1.2 GB |
 
 A cache hit costs about the same whatever the tool, because the floor is TLS, token verification and the MCP session. The cache saves the backend work, so it matters most for composed tools.
+
+## Operate it
+
+```bash
+scout-mcp policy test --strict                    # config/policy_test.yaml against config/policy.yaml
+scout-mcp policy check --subject role:support_copilot --tenant acme --action tool:s3:read --resource docs/a.txt
+scout-mcp ingest --tenant acme docs/*.md          # chunk, embed and write documents for one tenant
+scout-mcp tenant add initech                      # a tenant's three Keycloak clients; secrets shown once
+scout-mcp new-tool weather.lookup                 # an installable plugin package that meets the tool contract
+```
+
+None of these edits `config/`. They print the rule, the allowlist entry or the next step, and a person makes the change.
 
 ## Develop without Docker
 
@@ -106,18 +126,18 @@ mcpvenv/bin/python scripts/bench_pipeline.py     # request overhead, backend fak
 
 The tests run the real server, middleware, policy file and tool registry in one process, with Redis, the embedding model and token validation replaced. The end-to-end tests in `tests/e2e` need the running stack and skip themselves otherwise.
 
-GitHub Actions runs four jobs on every push: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 31 end-to-end tests and the benchmark, and dependency and image scans.
+GitHub Actions runs four jobs on every push: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 41 end-to-end tests, a sample ingest and the benchmark, and dependency and image scans.
 
 ## Before you put this in front of real data
 
 The defaults are for development. At minimum:
 
-- Change every password and secret in `.env`, the client secrets in `deploy/keycloak/scout-realm.json`, and the `scout_app` and `keycloak` passwords in `deploy/sql/init.sql`.
+- Change every password and secret in `.env`, the client secrets and the three users' passwords (`ana`, `rae` and `gus`, where `rae` can approve any pending call for acme) in `deploy/keycloak/scout-realm.json`, and the `scout_app`, `scout_ingest` and `keycloak` passwords in `deploy/sql/init.sql`.
 - Run Keycloak with `start`, TLS and a real hostname instead of `start-dev`.
 - Replace Caddy's `tls internal` with a real certificate.
 - Set `SCOUT_ENV=production`. The server then refuses to start while any development credential, a plain-http issuer, or a disabled policy, tenant or approval check is still set.
 - Free OpenRouter models route customer text to third-party hosts. Set `SCOUT_LLM_MODEL` to a model you are allowed to use, and `SCOUT_LLM_FALLBACK_MODEL=` empty to use only one.
-- Redis is a single node, so an outage stops rate limiting, caching and approvals.
+- Redis is a single node. An outage makes every read a cache miss and each replica rate-limit on its own, but it stops approvals.
 
 [docs/ISSUES.md](docs/ISSUES.md) lists what I know is still open.
 
