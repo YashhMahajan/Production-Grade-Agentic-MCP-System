@@ -23,9 +23,9 @@ REALM = {c["clientId"]: c for c in json.loads((ROOT / "deploy/keycloak/scout-rea
 class Keycloak:
     """Just enough of the admin API: a token, a lookup by clientId, create and delete."""
 
-    def __init__(self, existing=(), fail_on_create=None):
+    def __init__(self, existing=(), fail_on_create=None, password="pw"):
         self.clients: dict[str, dict] = {c: {"id": f"uuid-{c}"} for c in existing}
-        self.fail_on_create, self.requests = fail_on_create, []
+        self.fail_on_create, self.requests, self.password = fail_on_create, [], password
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -35,7 +35,7 @@ class Keycloak:
         path = request.url.path
         if path == "/realms/master/protocol/openid-connect/token":
             form = dict(p.split("=") for p in request.content.decode().split("&"))
-            ok = form["username"] == "admin" and form["password"] == "pw" and form["client_id"] == "admin-cli"
+            ok = form["username"] == "admin" and form["password"] == self.password and form["client_id"] == "admin-cli"
             return httpx.Response(200 if ok else 401, json={"access_token": "admin-token"} if ok else {})
         if request.headers.get("authorization") != "Bearer admin-token":
             return httpx.Response(401)
@@ -87,7 +87,8 @@ async def test_every_generated_client_carries_the_new_tenant_and_no_other():
     for client_id, rep in kc.created().items():
         claim = next(m for m in rep["protocolMappers"] if m["name"] == "tenant")
         assert claim["config"]["claim.value"] == "initech", client_id
-        assert "acme" not in json.dumps(rep) and "globex" not in json.dumps(rep), client_id
+        readable = json.dumps({k: v for k, v in rep.items() if k != "secret"})  # the secret is random text
+        assert "acme" not in readable and "globex" not in readable, client_id
         assert rep["publicClient"] is False and rep["standardFlowEnabled"] is False
         assert rep["directAccessGrantsEnabled"] is False and rep["fullScopeAllowed"] is False
 
@@ -102,11 +103,14 @@ async def test_each_secret_is_long_random_and_the_one_the_client_was_created_wit
 
 
 async def test_the_admin_api_is_called_with_the_admin_token_not_the_password():
-    kc = Keycloak()
-    await add(kc)
+    sentinel = "sentinel-Admin-Pass-7731"  # long and fixed, so it cannot turn up in a random secret
+    kc = Keycloak(password=sentinel)
+    await add(kc, password=sentinel)
     api = [r for r in kc.requests if r.url.path.startswith("/admin/")]
     assert api and all(r.headers["authorization"] == "Bearer admin-token" for r in api)
-    assert not any(b"pw" in r.content for r in api)
+    for r in api:
+        assert sentinel.encode() not in r.content and sentinel not in str(r.url)
+        assert sentinel not in str(dict(r.headers))
 
 
 # ── What it refuses ────────────────────────────────────────────────────────
