@@ -137,10 +137,9 @@ services:
       SCOUT_CLIENT_SECRET: ${SCOUT_CLIENT_SECRET:-dev-secret-copilot-acme}
       SCOUT_TENANT: ${SCOUT_TENANT:-acme}
       SCOUT_LLM_API_KEY: ${SCOUT_LLM_API_KEY:-}
-      SCOUT_LLM_MODEL: ${SCOUT_LLM_MODEL:-deepseek/deepseek-v4-flash:free}
+      SCOUT_LLM_MODEL: ${SCOUT_LLM_MODEL:-google/gemma-4-31b-it:free}
       SCOUT_LLM_BASE_URL: ${SCOUT_LLM_BASE_URL:-https://openrouter.ai/api/v1}
-      SCOUT_LLM_FALLBACK: ${SCOUT_LLM_FALLBACK:-false}
-      SCOUT_LLM_GROQ_KEY: ${SCOUT_LLM_GROQ_KEY:-}
+      SCOUT_LLM_FALLBACK_MODEL: ${SCOUT_LLM_FALLBACK_MODEL-inclusionai/ling-3.2-flash:free}
     depends_on:
       scout-mcp: { condition: service_healthy }
       keycloak: { condition: service_healthy }

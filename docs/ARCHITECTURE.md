@@ -76,7 +76,7 @@ The tenant is set once, from the token, and every backend enforces it separately
 
 ## Agents
 
-Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orchestrator.py`. The retriever may call six read-only tools, at most 6 iterations. The critic can send the draft back once. Agents reach the server through `ScoutMCPClient`, so server policy applies to them like any client. The LLM client sends prompts to one provider unless `SCOUT_LLM_FALLBACK=true`.
+Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orchestrator.py`. The retriever may call six read-only tools, at most 6 iterations. The critic can send the draft back once. Agents reach the server through `ScoutMCPClient`, so server policy applies to them like any client. The LLM client calls `SCOUT_LLM_MODEL` and, if that call fails or returns nothing, `SCOUT_LLM_FALLBACK_MODEL`. Both go to OpenRouter with one key; the defaults are free models from different upstream hosts, so one host being rate limited does not stop a turn.
 
 ## Observability
 
