@@ -113,4 +113,4 @@ I went through auth, tenant isolation, the approval gate, `http.fetch`, the path
 - The official Postgres image trusts connections from `127.0.0.1` inside its own container. Only `docker compose exec` reaches it, but it means a wrong password passes there.
 
 **Decision for you**
-- Which LLM providers may see customer text. The default is one provider; `SCOUT_LLM_FALLBACK=true` adds the others listed in `agents/base.py`.
+- Which LLM providers may see customer text. The copilot now uses two free OpenRouter models (primary and fallback) on one key; free-tier limits are about 50 requests a day without credit.

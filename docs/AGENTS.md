@@ -83,6 +83,6 @@ Load policy.yaml at startup and fail if it is missing
 | Citations | every `[S#]` must name a finding, checked in code | `agents/orchestrator.py` |
 | Customer id | must look like `CUST-1001`, else the copilot asks for one | `agents/planner.py` |
 | Writes | none; the allow-list has no write tool, and the server also enforces policy | both |
-| LLM providers | one, unless `SCOUT_LLM_FALLBACK=true` | `agents/base.py` |
+| LLM models | primary `SCOUT_LLM_MODEL`, then `SCOUT_LLM_FALLBACK_MODEL` on any error or empty reply; both free on OpenRouter, same key | `agents/base.py` |
 
 The server's policy applies to the copilot like any client. The client-side allow-list is a second layer, not the only one.

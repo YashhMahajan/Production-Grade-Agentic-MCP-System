@@ -115,7 +115,7 @@ The defaults are for development. At minimum:
 - Change every password and secret in `.env`, the client secrets in `deploy/keycloak/scout-realm.json`, and the `scout_app` and `keycloak` passwords in `deploy/sql/init.sql`.
 - Run Keycloak with `start`, TLS and a real hostname instead of `start-dev`.
 - Replace Caddy's `tls internal` with a real certificate.
-- Decide which LLM providers may see customer text. `SCOUT_LLM_FALLBACK` is off by default.
+- Free OpenRouter models route customer text to third-party hosts. Set `SCOUT_LLM_MODEL` to a model you are allowed to use, and `SCOUT_LLM_FALLBACK_MODEL=` empty to use only one.
 - Redis is a single node, so an outage stops rate limiting, caching and approvals.
 
 [docs/ISSUES.md](docs/ISSUES.md) lists what I know is still open.

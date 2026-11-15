@@ -65,38 +65,53 @@ async def test_fetch_connects_to_the_address_it_checked(monkeypatch):
 
 
 class RecordingClient:
-    urls: list[str] = []
+    models: list[str] = []
+    fail: set[str] = set()
 
     def __init__(self, *a, **k): pass
     async def __aenter__(self): return self
     async def __aexit__(self, *a): pass
 
     async def post(self, url, json, headers):
-        RecordingClient.urls.append(url)
-        raise httpx.ConnectError("down")
+        RecordingClient.models.append(json["model"])
+        if json["model"] in RecordingClient.fail:
+            raise httpx.ConnectError("down")
+        req = httpx.Request("POST", url)
+        return httpx.Response(200, request=req, json={"choices": [{"message": {"content": "ok " + json["model"]}}]})
 
 
-async def attempts(monkeypatch, fallback: str | None) -> list[str]:
-    RecordingClient.urls = []
+def llm(monkeypatch, fail: set[str], fallback: str | None = None):
+    RecordingClient.models, RecordingClient.fail = [], fail
     monkeypatch.setattr(base.httpx, "AsyncClient", RecordingClient)
     monkeypatch.setenv("SCOUT_LLM_API_KEY", "k")
-    monkeypatch.setenv("SCOUT_LLM_GROQ_KEY", "g")
-    if fallback is None:
-        monkeypatch.delenv("SCOUT_LLM_FALLBACK", raising=False)
-    else:
-        monkeypatch.setenv("SCOUT_LLM_FALLBACK", fallback)
+    monkeypatch.setenv("SCOUT_LLM_MODEL", "a:free")
+    monkeypatch.setenv("SCOUT_LLM_FALLBACK_MODEL", "b:free" if fallback is None else fallback)
+    return base.LLM()
+
+
+MSG = [{"role": "user", "content": "hi"}]
+
+
+async def test_llm_uses_only_the_primary_when_it_works(monkeypatch):
+    out = await llm(monkeypatch, set()).complete("sys", MSG)
+    assert RecordingClient.models == ["a:free"] and "a:free" in out["choices"][0]["message"]["content"]
+
+
+async def test_llm_falls_through_to_the_second_model_when_the_first_fails(monkeypatch):
+    out = await llm(monkeypatch, {"a:free"}).complete("sys", MSG)
+    assert RecordingClient.models == ["a:free", "b:free"] and "b:free" in out["choices"][0]["message"]["content"]
+
+
+async def test_llm_raises_the_last_error_when_every_model_fails(monkeypatch):
     with pytest.raises(httpx.ConnectError):
-        await base.LLM().complete("sys", [{"role": "user", "content": "hi"}])
-    return RecordingClient.urls
+        await llm(monkeypatch, {"a:free", "b:free"}).complete("sys", MSG)
+    assert RecordingClient.models == ["a:free", "b:free"]
 
 
-async def test_llm_sends_prompts_to_one_provider_by_default(monkeypatch):
-    assert len(await attempts(monkeypatch, None)) == 1
-
-
-async def test_llm_fallback_tries_every_configured_provider_when_enabled(monkeypatch):
-    urls = await attempts(monkeypatch, "true")
-    assert len(urls) == 4 and any("groq.com" in u for u in urls)
+async def test_llm_fallback_can_be_turned_off(monkeypatch):
+    with pytest.raises(httpx.ConnectError):
+        await llm(monkeypatch, {"a:free"}, fallback="").complete("sys", MSG)
+    assert RecordingClient.models == ["a:free"]
 
 
 async def test_fetch_token_uses_the_client_credentials_grant():

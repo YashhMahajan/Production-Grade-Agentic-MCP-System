@@ -25,6 +25,10 @@ import structlog
 
 log = structlog.get_logger("scout.agents")
 
+# Both are free on OpenRouter with tool calling and JSON mode, from different upstream providers.
+DEFAULT_MODEL = "google/gemma-4-31b-it:free"
+DEFAULT_FALLBACK_MODEL = "inclusionai/ling-3.2-flash:free"
+
 
 class BudgetExceeded(Exception):
     """The run used up its token budget or its time. ``reason`` says which."""
@@ -77,11 +81,11 @@ class LLM:
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.environ.get("SCOUT_LLM_API_KEY", os.environ.get("OPENROUTER_API_KEY", ""))
-        self.model = model or os.environ.get("SCOUT_LLM_MODEL", "deepseek/deepseek-v4-flash:free")
+        self.model = model or os.environ.get("SCOUT_LLM_MODEL", DEFAULT_MODEL)
         self.base_url = os.environ.get("SCOUT_LLM_BASE_URL", "https://openrouter.ai/api/v1")
-        # Fallback sends the same prompt, customer text included, to other providers.
-        # Off unless SCOUT_LLM_FALLBACK=true.
-        self.fallback = os.environ.get("SCOUT_LLM_FALLBACK", "false").lower() == "true"
+        # Tried, in order, when the primary fails. Same endpoint and key; set to "" to turn it off.
+        fallback = os.environ.get("SCOUT_LLM_FALLBACK_MODEL", DEFAULT_FALLBACK_MODEL)
+        self.models = [self.model] + ([fallback] if fallback and fallback != self.model else [])
 
     async def complete(
         self,
@@ -90,79 +94,36 @@ class LLM:
         max_tokens: int = 1024,
         tools: list[dict] | None = None,
     ) -> dict:
-        payload_messages = [{"role": "system", "content": system}] + messages
-        
-        openrouter_key = self.api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        
-        # this is for switching the models when current one fails or throws error
-        fallback_configs = [
-            {
-                "model": self.model,
-                "api_key": self.api_key,
-                "base_url": self.base_url,
-            },
-            {
-                "model": "meta-llama/llama-3.3-70b-instruct:free",
-                "api_key": openrouter_key,
-                "base_url": "https://openrouter.ai/api/v1",
-            },
-            {
-                "model": "nvidia/nemotron-3-super-120b-a12b:free",
-                "api_key": openrouter_key,
-                "base_url": "https://openrouter.ai/api/v1",
-            },
-            {
-                "model": "llama-3.3-70b-versatile",
-                "api_key": os.environ.get("SCOUT_LLM_GROQ_KEY", os.environ.get("GROQ_API_KEY", "")),
-                "base_url": "https://api.groq.com/openai/v1",
-            }
-        ]
-
-        if not self.fallback:
-            fallback_configs = fallback_configs[:1]
-
-        # Deduplicate configs while preserving order
-        seen = set()
-        configs_to_try = []
-        for config in fallback_configs:
-            key = (config["model"], config["base_url"])
-            if key not in seen:
-                seen.add(key)
-                configs_to_try.append(config)
-
-        last_exception = None
-        for config in configs_to_try:
-            if not config["api_key"]:
-                log.debug("skipping_model_no_api_key", model=config["model"])
-                continue
-                
+        """Call the primary model; on any failure try the next one, so a turn survives a 429 or an outage."""
+        if not self.api_key:
+            raise RuntimeError("SCOUT_LLM_API_KEY is not set")
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-Title": "Scout MCP",
+        }
+        last: Exception | None = None
+        for model in self.models:
             body: dict[str, Any] = {
-                "model": config["model"],
+                "model": model,
                 "max_tokens": max_tokens,
-                "messages": payload_messages,
+                "messages": [{"role": "system", "content": system}] + messages,
             }
             if tools:
                 body["tools"] = tools
-            headers = {
-                "Authorization": f"Bearer {config['api_key']}",
-                "Content-Type": "application/json",
-            }
-            if "openrouter" in config["base_url"]:
-                headers["HTTP-Referer"] = "https://github.com/scout-mcp/scout-mcp"
-                headers["X-Title"] = "Scout MCP"
-
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
-                    resp = await client.post(f"{config['base_url']}/chat/completions", json=body, headers=headers)
+                    resp = await client.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
                     resp.raise_for_status()
-                    return resp.json()
+                    data = resp.json()
+                if not _first_text_block(data) and not data.get("choices", [{}])[0].get("message", {}).get("tool_calls"):
+                    raise ValueError("empty completion")
+                return data
             except Exception as e:
-                log.warning("llm_fallback_triggered", failed_model=config["model"], error=str(e))
-                last_exception = e
-                
-        if last_exception:
-            raise last_exception
-        raise RuntimeError("No models configured for fallback or all failed.")
+                log.warning("llm_fallback_triggered", failed_model=model, error=str(e))
+                last = e
+        assert last is not None
+        raise last
 
 
 class Agent(ABC):
