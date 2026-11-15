@@ -83,9 +83,15 @@ def sign_in(username: str) -> str:
         # What a browser would send: every hidden field the page carries, then the credentials.
         fields = {m.group(1): html.unescape(m.group(2)) for m in
                   re.finditer(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', form.group(0))}
-        done = client.post(action, data={**fields, "username": username, "password": f"dev-password-{username}"})
-        assert done.status_code == 302, (f"{done.status_code}: {_page_text(done)}; "
-                                         f"cookies sent: {sorted(c.name for c in client.cookies.jar)}")
+        # A browser sends the cookies Keycloak set on this page. Python's jar withholds some of them
+        # from plain http://localhost (it applies Secure and domain rules a browser relaxes), which
+        # Keycloak reports as "Cookie not found", so they are sent as given.
+        cookie = "; ".join(f"{c.name}={c.value}" for c in client.cookies.jar)
+        done = client.post(action, headers={"Cookie": cookie},
+                           data={**fields, "username": username, "password": f"dev-password-{username}"})
+        attributes = [(c.name, c.domain, c.path, c.secure) for c in client.cookies.jar]
+        assert done.status_code == 302, (f"{done.status_code}: {_page_text(done)}; cookies: {attributes}; "
+                                         f"sent header: {done.request.headers.get('cookie', '')[:60]!r}")
         code = parse_qs(urlparse(done.headers["location"]).query)["code"][0]
         issued = client.post(f"{oidc}/token", data={
             "grant_type": "authorization_code", "client_id": "scout-human", "code": code,
