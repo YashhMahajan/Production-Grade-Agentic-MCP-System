@@ -56,6 +56,12 @@ def claims_of(raw_token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
+def _page_text(response: httpx.Response) -> str:
+    """The readable text of a Keycloak page, so a failed sign-in says what Keycloak said."""
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", response.text, flags=re.S)
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", text)).split())[:500]
+
+
 def sign_in(username: str) -> str:
     """Sign a person in as the scout-human client does: authorization code with PKCE.
 
@@ -69,11 +75,17 @@ def sign_in(username: str) -> str:
         page = client.get(f"{oidc}/auth", params={
             "client_id": "scout-human", "redirect_uri": HUMAN_REDIRECT, "response_type": "code",
             "code_challenge": challenge, "code_challenge_method": "S256", "state": "e2e"})
-        assert page.status_code == 200, page.text[:300]
-        action = html.unescape(re.search(r'action="([^"]+)"', page.text).group(1))
+        assert page.status_code == 200, _page_text(page)
+        form = re.search(r'<form[^>]*id="kc-form-login"[^>]*>(.*?)</form>', page.text, re.S)
+        assert form, _page_text(page)
+        action = html.unescape(re.search(r'action="([^"]+)"', form.group(0)).group(1))
         action = action.replace("http://keycloak:8080", KEYCLOAK)
-        done = client.post(action, data={"username": username, "password": f"dev-password-{username}"})
-        assert done.status_code == 302, done.text[:300]
+        # What a browser would send: every hidden field the page carries, then the credentials.
+        fields = {m.group(1): html.unescape(m.group(2)) for m in
+                  re.finditer(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', form.group(0))}
+        done = client.post(action, data={**fields, "username": username, "password": f"dev-password-{username}"})
+        assert done.status_code == 302, (f"{done.status_code}: {_page_text(done)}; "
+                                         f"cookies sent: {sorted(c.name for c in client.cookies.jar)}")
         code = parse_qs(urlparse(done.headers["location"]).query)["code"][0]
         issued = client.post(f"{oidc}/token", data={
             "grant_type": "authorization_code", "client_id": "scout-human", "code": code,
