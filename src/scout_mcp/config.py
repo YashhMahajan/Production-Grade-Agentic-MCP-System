@@ -17,6 +17,9 @@ class ServerSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="SCOUT_", env_file=".env", extra="ignore", frozen=True)
 
+    # "production" makes startup refuse development defaults (see production_problems).
+    env: Literal["development", "production"] = "development"
+
     # ── Component 1: Transport ──────────────────────────────────────────────
     transport: Literal["stdio", "http"] = "http"
     http_host: str = "0.0.0.0"
@@ -99,6 +102,29 @@ class ServerSettings(BaseSettings):
     # retrieval (54.29 vs 53.25) for 3x the parameters and ~2.5x the latency.
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     embedding_cache_dir: str | None = None
+
+    def production_problems(self) -> list[str]:
+        """Development settings that must not reach production. Empty means none found."""
+        problems = []
+        dev_values = {
+            "postgres_dsn": "scout_app:scout_app@",
+            "redis_url": "scout-dev-redis",
+        }
+        for name, marker in dev_values.items():
+            if marker in getattr(self, name):
+                problems.append(f"{name} still holds the development credential")
+        for name, value in (("elasticsearch_password", "scout-dev-es"), ("vector_db_api_key", "scout-dev-qdrant")):
+            if getattr(self, name) in (None, value):
+                problems.append(f"{name} is unset or still the development value")
+        if self.auth_issuer.startswith("http://"):
+            problems.append("auth_issuer is plain http")
+        if not self.policy_default_deny:
+            problems.append("policy_default_deny is off")
+        if not self.require_tenant:
+            problems.append("require_tenant is off")
+        if not self.destructive_tool_requires_approval:
+            problems.append("destructive_tool_requires_approval is off")
+        return problems
 
 
 @lru_cache(maxsize=1)

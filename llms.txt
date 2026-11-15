@@ -1,0 +1,32 @@
+# Scout MCP
+
+> A multi-tenant MCP server that gives agents read access to Postgres, Elasticsearch, Qdrant and S3, with a four-agent support copilot on top. Python 3.11, MCP SDK 2.x, Streamable HTTP behind Caddy, OAuth 2.1 tokens from Keycloak.
+
+Read MEMORY.md first. It holds the rules for working in this repo: never start Docker locally, never print or commit `.env`, run the stack only in GitHub Actions, publish only measured numbers.
+
+## Docs
+- [MEMORY.md](MEMORY.md): state, rules, decisions, open work
+- [README.md](README.md): what it is, quick start, production checklist
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): request path and components
+- [docs/AGENTS.md](docs/AGENTS.md): the copilot, its limits, and the rules for adding a tool
+- [docs/DATA-MODEL.md](docs/DATA-MODEL.md): schemas, row-level security, indexes
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): numbers measured in CI, with the scripts that measured them
+- [docs/ISSUES.md](docs/ISSUES.md): every defect found, the fix and the test that guards it
+- [docs/PRD.md](docs/PRD.md): requirements
+
+## Code
+- [src/scout_mcp/server.py](src/scout_mcp/server.py): server and the request pipeline (`_run_pipeline`)
+- [src/scout_mcp/tools/](src/scout_mcp/tools/): one file per tool; base class in `base.py`, registry in `registry.py`
+- [config/policy.yaml](config/policy.yaml): who may call what
+- [src/scout_mcp/agents/](src/scout_mcp/agents/): planner, retriever, synthesizer, critic, and the LLM client with its model fallback
+- [tests/](tests/): in-process tests; `tests/e2e/` needs the running stack (`SCOUT_E2E=1`)
+
+## Use it
+- Connect an MCP client to `https://localhost:8443/mcp` with a bearer token from Keycloak (client-credentials grant, realm `scout`, audience `scout-mcp`).
+- Add a tool: follow the rules in docs/AGENTS.md. A tool needs scopes, a policy rule granting them, approval if it writes, and a test; `tests/test_hardening.py` checks the first three.
+- LLM: `SCOUT_LLM_MODEL` then `SCOUT_LLM_FALLBACK_MODEL`, both OpenRouter free models by default. The free tier allows about 50 requests a day without credit.
+
+## Optional
+- [deploy/](deploy/): Caddy, Keycloak realm, Prometheus rules, Grafana dashboard, seed data
+- [scripts/](scripts/): the two benchmarks
+- [.github/workflows/ci.yml](.github/workflows/ci.yml): test, validate-deploy, stack, security jobs

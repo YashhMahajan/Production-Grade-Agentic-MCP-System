@@ -108,6 +108,18 @@ async def test_llm_raises_the_last_error_when_every_model_fails(monkeypatch):
     assert RecordingClient.models == ["a:free", "b:free"]
 
 
+async def test_llm_does_not_fall_back_on_a_rejected_key(monkeypatch):
+    c = llm(monkeypatch, set())
+
+    async def post(self, url, json, headers):
+        RecordingClient.models.append(json["model"])
+        return httpx.Response(401, request=httpx.Request("POST", url))
+    monkeypatch.setattr(RecordingClient, "post", post)
+    with pytest.raises(httpx.HTTPStatusError):
+        await c.complete("sys", MSG)
+    assert RecordingClient.models == ["a:free"]
+
+
 async def test_llm_fallback_can_be_turned_off(monkeypatch):
     with pytest.raises(httpx.ConnectError):
         await llm(monkeypatch, {"a:free"}, fallback="").complete("sys", MSG)

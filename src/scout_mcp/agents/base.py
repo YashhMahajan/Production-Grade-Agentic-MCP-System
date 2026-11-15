@@ -120,6 +120,9 @@ class LLM:
                     raise ValueError("empty completion")
                 return data
             except Exception as e:
+                # Same key and request: another model would fail the same way, and each try costs a free-tier request.
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (400, 401, 402, 403):
+                    raise
                 log.warning("llm_fallback_triggered", failed_model=model, error=str(e))
                 last = e
         assert last is not None

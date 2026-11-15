@@ -394,6 +394,10 @@ class ScoutServer:
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
     async def startup(self) -> None:
+        if self.settings.env == "production":
+            problems = self.settings.production_problems()
+            if problems:
+                raise RuntimeError("SCOUT_ENV=production but: " + "; ".join(problems))
         init_tracing(self.settings)
         self.audit = AuditLogger(self.settings.audit_log_path)
         await self.cache.connect()
