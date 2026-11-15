@@ -5,7 +5,7 @@
 Read MEMORY.md first. It holds the rules for working in this repo: never start Docker locally, never print or commit `.env`, run the stack only in GitHub Actions, publish only measured numbers.
 
 ## Docs
-- [MEMORY.md](MEMORY.md): state, rules, decisions, open work
+- [MEMORY.md](MEMORY.md): state, rules, decisions
 - [README.md](README.md): what it is, quick start, production checklist
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): request path and components
 - [docs/AGENTS.md](docs/AGENTS.md): the copilot, its limits, and the rules for adding a tool

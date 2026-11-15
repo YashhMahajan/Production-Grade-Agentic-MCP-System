@@ -114,7 +114,3 @@ Spans go to the OTel collector and Jaeger. Prometheus scrapes `scout-mcp:8080/me
 - **A tool's result is checked against its own schema.** A wrong schema is worse than none, because every compliant client then breaks, so the server says which tool broke it instead of leaving that to the client.
 - **Ingest writes the hash last.** A crash leaves a document that is simply done again, never one that looks done and is not.
 - **Commands print config changes, they do not make them.** Granting access or outbound hosts is a decision for a person, and `config/` is read-only in the image.
-
-## Not on the request path
-
-`agents/memory.py` exists and is tested in isolation, but the orchestrator does not use it. See [ISSUES.md](ISSUES.md).

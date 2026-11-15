@@ -62,23 +62,14 @@ Targets I set, and what CI observed.
 | Whole stack memory | under 2.5 GiB | 2.2 to 2.3 GiB |
 | Errors in a 16-client run | 0 | 0 |
 
-## Scope of 0.5.0 (not tagged)
+## Scope of 0.5.0
 
-Ten server features ([ISSUES.md](ISSUES.md) 64 to 75): tests that a model obeying a poisoned ticket still cannot write, fetch or cross tenants; a typed output schema for every tool, checked on every call; `scout-mcp policy test` and `check`, and the fix for a policy glob that let the copilot read keys it should not; tools from other packages through an entry point, and `scout-mcp new-tool`; `scout-mcp ingest`; `postgres.describe`; people signing in with PKCE, a reviewer role, and the fix that stopped a human approving what their own agent asked for; an approval inbox and a signed webhook; the `investigate-customer` prompt; and `scout-mcp tenant add`. Not in 0.5.0: `scout.whoami`, token exchange for an agent acting on a person's token, a managed Keycloak user profile, and the copilot rework.
+Ten server features ([ISSUES.md](ISSUES.md) 64 to 75): tests that a model obeying a poisoned ticket still cannot write, fetch or cross tenants; a typed output schema for every tool, checked on every call; `scout-mcp policy test` and `check`, and the fix for a policy glob that let the copilot read keys it should not; tools from other packages through an entry point, and `scout-mcp new-tool`; `scout-mcp ingest`; `postgres.describe`; people signing in with PKCE, a reviewer role, and the fix that stopped a human approving what their own agent asked for; an approval inbox and a signed webhook; the `investigate-customer` prompt; and `scout-mcp tenant add`.
 
 ## Scope of 0.4.0
 
-A security review of the code and the fixes it led to ([ISSUES.md](ISSUES.md) 43 to 57), the move to MCP SDK 2.x, tool annotations, and the agent layer: tool output marked as data, enforced token and time budgets, one repair attempt for a reply that is not JSON, citations checked in code, and the agent's remaining time passed to the server. Not in 0.4.0: the 2026-07-28 spec's stateless handshake on Scout's own client, typed output schemas, a model-quality evaluation (it needs a model and a key, so I have not run one), and the first two items under Next.
+A security review of the code and the fixes it led to ([ISSUES.md](ISSUES.md) 43 to 57), the move to MCP SDK 2.x, tool annotations, and the agent layer: tool output marked as data, enforced token and time budgets, one repair attempt for a reply that is not JSON, citations checked in code, and the agent's remaining time passed to the server.
 
 ## Scope of 0.3.0
 
 Keycloak, a TLS edge, an internal data network with a credential on every store, a hardened server container, approval review endpoints, ATBA timeouts and the circuit gauge, Prometheus alert rules and a Grafana dashboard, the CI workflow with 31 end-to-end tests and a real-stack benchmark, the fixes in [ISSUES.md](ISSUES.md), and the docs.
-
-## Next
-
-1. Put a distribution behind the benchmark variance (more runs, or a dedicated runner), try a slow warehouse query, and try more than one replica.
-2. Keycloak in production mode with real TLS, and secrets from an environment or secret store instead of the repo.
-3. Check every table a query reads against policy (from `EXPLAIN`), and take `EXECUTE` on `set_config` away from the role that runs agent SQL.
-4. Decide which LLM providers may see customer text, then run a model evaluation on the seed data and publish the result.
-5. Rework the copilot: fixed recipes for what tools can answer (brief, changes, similar tickets), the model only for writing, and an evidence pack instead of an error when the model quota is gone. That includes replacing `agents/memory.py`, which the orchestrator does not use.
-6. More services in `deploy/`. I will add one only with a measured benefit or a test that proves the control it provides.

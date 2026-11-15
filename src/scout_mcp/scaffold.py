@@ -57,7 +57,7 @@ class {stem}Output(BaseModel):
 class {cls}(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="{name}",
-        description="TODO: one sentence on what this tool returns.",
+        description="Answer a query. Clients show this sentence to the model, so say what {name} returns.",
         level=ToolLevel.ATOMIC,
         scopes_required=("{scope}",),
         cacheable=True,

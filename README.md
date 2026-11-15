@@ -83,7 +83,7 @@ Inside the server each call goes through validation, scope and policy checks, ra
 
 ## Numbers
 
-Measured in CI on a shared 4-vCPU GitHub runner, three runs, through the TLS edge with real backends. The same row moves by up to about 40% between runs, so these are ranges. [docs/PERFORMANCE.md](docs/PERFORMANCE.md) has the full tables, the method and what I have not measured.
+Measured in CI on a shared 4-vCPU GitHub runner, three runs, through the TLS edge with real backends. The same row moves by up to about 40% between runs, so these are ranges. [docs/PERFORMANCE.md](docs/PERFORMANCE.md) has the full tables and the method.
 
 | What | Result |
 |------|--------|
@@ -92,7 +92,7 @@ Measured in CI on a shared 4-vCPU GitHub runner, three runs, through the TLS edg
 | `semantic_search` | 36 to 45 ms on a miss, 5 to 7 ms on a hit, 6.2 to 7.2x faster |
 | 16 concurrent clients | 134 to 199 requests/s, no errors in any run |
 | Whole stack memory | 2.2 to 2.3 GiB across 12 containers |
-| Request overhead with the backend faked | 1.9 ms at p50, 2.1 to 2.5 ms at p95 (was 2.8 and 3.3 to 3.9 ms before the move to MCP SDK 2.x and the 0.4 fixes; I did not isolate which change did it) |
+| Request overhead with the backend faked | 1.9 ms at p50, 2.1 to 2.5 ms at p95 (2.8 and 3.3 to 3.9 ms in the 0.3.0 numbers; the SDK, the code and the machine all changed since) |
 | Output-schema check on every call | no measurable cost: p50 1.87 ms before, 1.86 ms after, one run each |
 | `postgres.describe` through the edge, real Postgres, never cached | 5.0 ms at p50, 6.2 ms at p95 (one CI run, 200 calls) |
 | Ingesting the same file twice | 1 chunk embedded the first time, 0 the second, in CI |
@@ -138,8 +138,6 @@ The defaults are for development. At minimum:
 - Set `SCOUT_ENV=production`. The server then refuses to start while any development credential, a plain-http issuer, or a disabled policy, tenant or approval check is still set.
 - Free OpenRouter models route customer text to third-party hosts. Set `SCOUT_LLM_MODEL` to a model you are allowed to use, and `SCOUT_LLM_FALLBACK_MODEL=` empty to use only one.
 - Redis is a single node. An outage makes every read a cache miss and each replica rate-limit on its own, but it stops approvals.
-
-[docs/ISSUES.md](docs/ISSUES.md) lists what I know is still open.
 
 ## Layout
 
