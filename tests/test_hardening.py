@@ -84,6 +84,6 @@ def test_coding_agent_entry_points_exist():
     assert (ROOT / "AGENTS.md").resolve() == (ROOT / "docs/AGENTS.md").resolve()
     text = (ROOT / "llms.txt").read_text()
     for line in text.splitlines():
-        if "](" in line and not line.startswith("- [") is False:
+        if "](" in line and line.startswith("- ["):
             target = line.split("](")[1].split(")")[0]
             assert (ROOT / target).exists(), f"llms.txt links to missing {target}"
