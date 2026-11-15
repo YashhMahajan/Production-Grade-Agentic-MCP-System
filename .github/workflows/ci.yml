@@ -24,6 +24,8 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check src tests deploy scripts
       - run: pytest -q
+      - name: Policy cases pass and every rule decides one
+        run: scout-mcp policy test --strict
       - name: Request-overhead benchmark
         run: |
           python scripts/bench_pipeline.py 1000 | tee bench-pipeline.json

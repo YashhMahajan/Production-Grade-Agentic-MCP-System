@@ -51,7 +51,7 @@ dev = [
 ]
 
 [project.scripts]
-scout-mcp = "scout_mcp.server:main"
+scout-mcp = "scout_mcp.cli:main"
 scout-copilot = "scout_mcp.agents.cli:main"
 
 [build-system]
