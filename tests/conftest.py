@@ -55,6 +55,10 @@ TOKENS = {
     # Same subject as "writer": used to show that nobody approves their own request.
     "self_reviewer": principal(scopes=("approval:review",)),
     "no_review_scope": principal(scopes=(), subject="user:nope"),
+    # The copilot's read scopes plus one more, for tests that ask what the server still
+    # refuses when a token is given more than it should have.
+    "copilot_fetch": principal(scopes=(PG, ES, VEC, "tool:http:fetch"), roles=("role:support_copilot",)),
+    "copilot_write": principal(scopes=(PG, ES, VEC, "tool:s3:write"), roles=("role:human_agent",)),
 }
 
 
