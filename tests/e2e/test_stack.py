@@ -398,6 +398,17 @@ def test_a_sign_in_without_a_code_challenge_is_refused():
         assert "error=invalid_request" in location
 
 
+def test_the_server_accepts_a_persons_token():
+    bearer = sign_in("ana")
+    claims = claims_of(bearer)
+    reply = httpx.post(f"{MCP_URL}/mcp", verify=False, headers={
+        "Authorization": f"Bearer {bearer}", "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream"},
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    shown = {k: claims.get(k) for k in ("iss", "aud", "jti", "iat", "exp", "sub", "azp", "typ", "tenant", "roles")}
+    assert reply.status_code == 200, (reply.status_code, reply.headers.get("www-authenticate"), reply.text[:200], shown)
+
+
 async def test_a_person_sees_only_their_own_tenants_rows():
     ids = {}
     for user in ("ana", "gus"):
