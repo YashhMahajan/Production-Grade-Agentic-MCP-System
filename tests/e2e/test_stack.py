@@ -356,3 +356,15 @@ async def test_an_ingested_document_is_found_by_its_tenant_and_nobody_else(acme,
     assert top["id"] == "doc_acme_warranty" and top["title"] == "Blender warranty"
     assert "24 month" in top["body"]
     assert value(await globex.call_tool("semantic_search", ask))["results"] == []
+
+
+# ── postgres.describe ─────────────────────────────────────────────────────
+async def test_describe_lists_the_real_schema_with_foreign_keys(acme):
+    out = value(await acme.call_tool("postgres.describe", {}))
+    tables = {t["name"]: t for t in out["tables"]}
+    assert {"customers", "orders", "documents"} <= set(tables)       # information_schema, as scout_app
+    assert {"id", "customer_id", "total_cents"} <= {c["name"] for c in tables["orders"]["columns"]}
+    assert "customer_id -> customers.id" in tables["orders"]["foreign_keys"]   # pg_constraint
+    assert "keycloak" not in str(out)   # nothing from the other database's roles or tables
+    only = value(await acme.call_tool("postgres.describe", {"tables": ["orders"]}))
+    assert [t["name"] for t in only["tables"]] == ["orders"]

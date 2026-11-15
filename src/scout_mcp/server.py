@@ -59,6 +59,7 @@ from scout_mcp.ratelimit.limiter import RateLimiter
 from scout_mcp.reliability.atba import ATBA
 from scout_mcp.reliability.circuit_breaker import CircuitBreakerRegistry, State
 from scout_mcp.reliability.retry import with_retry
+from scout_mcp.tools.base import CALLER
 from scout_mcp.tools.registry import ToolRegistry
 from scout_mcp.validation.schemas import ToolCallEnvelope
 
@@ -192,6 +193,7 @@ class ScoutServer:
         """One span and one audit record per call, whatever the outcome."""
         started = time.monotonic()
         status, error_code = "ok", None
+        caller_token = CALLER.set((envelope.caller, *envelope.roles))
         # Label by registered name only: callers choose the tool string, and an
         # unbounded set of span names or metric labels would grow without limit.
         label = envelope.tool if envelope.tool in self.registry else "unknown"
@@ -207,6 +209,7 @@ class ScoutServer:
                 self.metrics.calls_total.labels(tool=label, status=exc.code).inc()
                 raise
             finally:
+                CALLER.reset(caller_token)
                 if self.audit is not None:
                     self.audit.record(
                         trace_id=trace_id,

@@ -12,15 +12,15 @@ into a policy rejection instead of a dropped table.
 from __future__ import annotations
 
 import re
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 
 import asyncpg
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.config import get_settings
 from scout_mcp.errors.framework import UpstreamError
-from scout_mcp.tools.base import Tool, ToolLevel, ToolMetadata
+from scout_mcp.tools.base import CALLER, Tool, ToolLevel, ToolMetadata
 
 # The forbidden keywords list is our defense-in-depth against prompt injection. Even if the policy engine has a bug, this list makes it impossible for any SQL containing DROP to execute through this tool.
 
@@ -156,3 +156,127 @@ class PostgresQueryTool(Tool):
             "row_count": len(rows),
             "truncated": truncated,
         }
+
+
+# ── postgres.describe ─────────────────────────────────────────────────────
+# Fixed SQL: names travel as bind parameters, never inside the text. The columns come from
+# information_schema, which lists only tables this role can read. Foreign keys come from the
+# catalog because information_schema hides constraints on tables the role does not own.
+DESCRIBE_COLUMNS_SQL = (
+    "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns "
+    "WHERE table_schema = $1 AND ($2::text[] IS NULL OR table_name = ANY($2)) "
+    "ORDER BY table_name, ordinal_position"
+)
+DESCRIBE_FOREIGN_KEYS_SQL = (
+    "SELECT t.relname AS table_name, a.attname AS column_name, "
+    "rt.relname AS ref_table, ra.attname AS ref_column "
+    "FROM pg_constraint c "
+    "JOIN pg_class t ON t.oid = c.conrelid "
+    "JOIN pg_namespace n ON n.oid = t.relnamespace "
+    "JOIN pg_class rt ON rt.oid = c.confrelid "
+    "CROSS JOIN LATERAL unnest(c.conkey, c.confkey) AS k(attnum, fattnum) "
+    "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum "
+    "JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = k.fattnum "
+    "WHERE c.contype = 'f' AND n.nspname = $1 ORDER BY t.relname, a.attname"
+)
+
+_IDENTIFIER = r"^[A-Za-z_][A-Za-z0-9_]{0,62}$"
+
+
+class PostgresDescribeInput(BaseModel):
+    schema_name: str = Field("public", alias="schema", pattern=_IDENTIFIER,
+                             description="Postgres schema to describe.")
+    tables: list[Annotated[str, StringConstraints(pattern=_IDENTIFIER)]] | None = Field(
+        None, min_length=1, max_length=50, description="Only these tables. Leave out for all you may read.")
+
+
+class ColumnInfo(BaseModel):
+    name: str
+    type: str
+    nullable: bool
+
+
+class TableInfo(BaseModel):
+    name: str
+    columns: list[ColumnInfo]
+    # How many columns exist that this caller may not read. Their names are not given.
+    hidden_columns: int = 0
+    foreign_keys: list[str]  # "customer_id -> customers.id"
+
+
+class PostgresDescribeOutput(BaseModel):
+    schema_name: str
+    tables: list[TableInfo]
+
+
+class PostgresDescribeTool(Tool):
+    meta: ClassVar[ToolMetadata] = ToolMetadata(
+        name="postgres.describe",
+        description=(
+            "List the tables and columns you may read, with types and foreign keys. "
+            "Call this before writing SQL for postgres.query instead of guessing column names."
+        ),
+        level=ToolLevel.ATOMIC,
+        scopes_required=("tool:postgres:read",),
+        # The answer depends on who asks (hidden tables and columns), and the cache key does not
+        # include the caller: a cached full answer could be served to a role that may not see it.
+        cacheable=False,
+        timeout_ms=5_000,
+        tags=("postgres", "schema", "read"),
+    )
+    input_schema: ClassVar[type[BaseModel]] = PostgresDescribeInput
+    output_schema: ClassVar[type[BaseModel] | None] = PostgresDescribeOutput
+
+    def __init__(self, policy: PolicyEngine):
+        super().__init__(policy)
+        self._pg = PostgresQueryTool(policy)  # shares its connection pool
+
+    def policy_resource(self, args: PostgresDescribeInput) -> str:  # type: ignore[override]
+        # The same names postgres.query uses: bare for public, "schema/table" otherwise.
+        return "*" if args.schema_name == "public" else f"{args.schema_name}/*"
+
+    async def _fetch(self, tenant: str, schema: str, tables: list[str] | None):
+        pool = await self._pg._ensure_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction(readonly=True):
+                    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant)
+                    columns = await conn.fetch(DESCRIBE_COLUMNS_SQL, schema, tables)
+                    keys = await conn.fetch(DESCRIBE_FOREIGN_KEYS_SQL, schema)
+        except asyncpg.PostgresError as exc:
+            raise UpstreamError("postgres_error", retryable=False, hint=str(exc).splitlines()[0],
+                                context={"sqlstate": getattr(exc, "sqlstate", None)}) from exc
+        return (
+            [(r["table_name"], r["column_name"], r["data_type"], r["is_nullable"]) for r in columns],
+            [(r["table_name"], r["column_name"], r["ref_table"], r["ref_column"]) for r in keys],
+        )
+
+    def _may_read(self, subjects: tuple[str, ...], tenant: str, resource: str, column: str) -> bool:
+        context = {"sql": "", "columns": [column.lower()]}
+        return self.policy.decide(subjects, tenant, "tool:postgres:read", resource, context).allowed
+
+    async def run(self, tenant: str, args: PostgresDescribeInput) -> dict:  # type: ignore[override]
+        subjects = CALLER.get()  # empty means nobody, and policy refuses nobody
+        schema = args.schema_name
+        columns, keys = await self._fetch(tenant, schema, args.tables)
+
+        by_table: dict[str, list[tuple[str, str, str]]] = {}
+        for table, column, type_, nullable in columns:
+            by_table.setdefault(table, []).append((column, type_, nullable))
+
+        shown: dict[str, dict] = {}
+        for table, rows in by_table.items():
+            resource = table if schema == "public" else f"{schema}/{table}"
+            # A table the caller cannot read has every column refused, so it is left out below.
+            visible = [ColumnInfo(name=c, type=t, nullable=n == "YES").model_dump()
+                       for c, t, n in rows if self._may_read(subjects, tenant, resource, c)]
+            if visible:
+                shown[table] = {"name": table, "columns": visible,
+                                "hidden_columns": len(rows) - len(visible), "foreign_keys": []}
+
+        names = {t: {c["name"] for c in s["columns"]} for t, s in shown.items()}
+        for table, column, ref_table, ref_column in keys:
+            # Only a reference between two things the caller can see: it must not name a hidden table or column.
+            if column in names.get(table, ()) and ref_column in names.get(ref_table, ()):
+                shown[table]["foreign_keys"].append(f"{column} -> {ref_table}.{ref_column}")
+        return {"schema_name": schema, "tables": list(shown.values())}

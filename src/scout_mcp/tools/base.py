@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextvars import ContextVar
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -32,6 +33,12 @@ from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.errors.framework import PolicyError, ToolError, ValidationError
+
+
+# The caller's subject and roles for the call being served, set by the server. A tool whose
+# answer depends on who asks (postgres.describe) reads it; ``run`` is not told otherwise.
+# Empty outside a server call, and a tool must treat empty as "nobody".
+CALLER: ContextVar[tuple[str, ...]] = ContextVar("scout_caller", default=())
 
 
 class ToolLevel(str, Enum):

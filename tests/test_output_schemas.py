@@ -19,6 +19,9 @@ from tests.conftest import rpc
 # One realistic result per tool, in the shape each tool's run() returns today.
 SAMPLES: dict[str, dict] = {
     "postgres.query": {"columns": ["id"], "rows": [{"id": "CUST-1001"}], "row_count": 1, "truncated": False},
+    "postgres.describe": {"schema_name": "public", "tables": [
+        {"name": "orders", "columns": [{"name": "id", "type": "text", "nullable": False}],
+         "hidden_columns": 0, "foreign_keys": ["customer_id -> customers.id"]}]},
     "elasticsearch.search": {"total": 1, "took_ms": 3, "hits": [
         {"id": "TCK-1", "score": 1.2, "source": {"subject": "Refund"}}]},
     "vector.search": {"matches": [{"id": 7, "doc_id": "DOC-1", "score": 0.9, "payload": {"text": "x"}}]},

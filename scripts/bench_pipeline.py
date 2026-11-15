@@ -84,7 +84,7 @@ async def main(n: int) -> str:
             patch("scout_mcp.server.get_tracer", lambda: tracer):
         settings = ServerSettings(
             _env_file=None, policy_file=str(ROOT / "config/policy.yaml"),
-            audit_log_path=f"{tmp}/audit.jsonl")
+            audit_log_path=f"{tmp}/audit.jsonl", check_embedding_model=False)
         server = ScoutServer(settings)
         app = build_http_app(server)
         started, stop = asyncio.Event(), asyncio.Event()

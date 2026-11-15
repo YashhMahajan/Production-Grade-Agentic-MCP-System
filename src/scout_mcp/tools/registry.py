@@ -81,7 +81,7 @@ class ToolRegistry:
         from scout_mcp.auth.policy import PolicyEngine
         from scout_mcp.tools.atomic.elasticsearch import ElasticsearchSearchTool
         from scout_mcp.tools.atomic.http_client import HTTPFetchTool
-        from scout_mcp.tools.atomic.postgres import PostgresQueryTool
+        from scout_mcp.tools.atomic.postgres import PostgresDescribeTool, PostgresQueryTool
         from scout_mcp.tools.atomic.s3_storage import S3GetTool, S3PutTool
         from scout_mcp.tools.atomic.vector_search import VectorSearchTool
         from scout_mcp.tools.composed.hybrid_search import HybridSearchTool
@@ -95,7 +95,7 @@ class ToolRegistry:
 
         # Atomic (Level 1)
         for cls in (
-            PostgresQueryTool, ElasticsearchSearchTool, VectorSearchTool,
+            PostgresQueryTool, PostgresDescribeTool, ElasticsearchSearchTool, VectorSearchTool,
             S3GetTool, S3PutTool, HTTPFetchTool,
         ):
             self.register(cls(policy))
