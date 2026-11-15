@@ -424,3 +424,20 @@ async def test_a_person_cannot_approve_their_own_request_but_a_reviewer_can():
 
         ran = await ana.call_tool("s3.put_object", {**args, "approval_id": approval_id})
         assert ran.ok and ran.value["bytes_written"] == len(args["content"])
+
+
+# ── The approval inbox ────────────────────────────────────────────────────
+async def test_the_inbox_lists_a_waiting_request_through_the_edge_without_its_arguments():
+    writer_token, reviewer_token = await token("writer-acme"), await token("reviewer-acme")
+    async with mcp("writer-acme", writer_token) as writer:
+        pending = await writer.call_tool("s3.put_object", {"key": "attachments/inbox.txt", "content": "SECRET-INBOX"})
+        approval_id = pending.hint.split("approval_id=")[1].split(".")[0]
+    headers = {"Authorization": f"Bearer {reviewer_token}"}
+    listed = httpx.get(f"{MCP_URL}/approvals?state=pending", verify=False, headers=headers)
+    assert listed.status_code == 200
+    assert approval_id in {a["id"] for a in listed.json()["approvals"]}
+    assert "SECRET-INBOX" not in listed.text
+    # Another tenant's reviewer is not shown it, and the request is cleaned up.
+    httpx.post(f"{MCP_URL}/approvals/{approval_id}/deny", verify=False, headers=headers)
+    after = httpx.get(f"{MCP_URL}/approvals?state=pending", verify=False, headers=headers)
+    assert approval_id not in {a["id"] for a in after.json()["approvals"]}

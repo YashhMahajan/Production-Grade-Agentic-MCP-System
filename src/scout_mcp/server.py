@@ -50,7 +50,8 @@ from scout_mcp.errors.framework import (
     UpstreamError,
     to_call_tool_result,
 )
-from scout_mcp.governance.approval import ApprovalGate, PendingApprovalError
+from scout_mcp.governance.approval import ApprovalGate, PendingApproval, PendingApprovalError
+from scout_mcp.governance.webhook import ApprovalNotifier
 from scout_mcp.governance.tenant import TenantMiddleware
 from scout_mcp.observability.audit import AuditLogger
 from scout_mcp.observability.metrics import MetricsRegistry, metrics_endpoint_for
@@ -133,6 +134,7 @@ class ScoutServer:
         # Built in startup(): they open files and connections.
         self.audit: AuditLogger | None = None
         self.approvals: ApprovalGate | None = None
+        self.notifier: ApprovalNotifier | None = None  # set at startup when a webhook is configured
         self._redis: Redis | None = None
         self.ready = False
 
@@ -345,6 +347,8 @@ class ScoutServer:
                 tenant=envelope.tenant, caller=envelope.caller, delegator=envelope.delegator,
                 tool=tool_name, arguments=payload,
             )
+            if self.notifier is not None:
+                self.notifier.notify(approval)  # in the background: never holds up the agent
             raise PendingApprovalError(approval)
         approval = await self.approvals.check(approval_id, envelope.tenant)
         if approval.state == "consumed":
@@ -369,6 +373,27 @@ class ScoutServer:
                               hint=f"token lacks role {APPROVAL_REVIEW_ROLE}")
         return principal, request.state.tenant
 
+    async def approval_inbox(self, request: Request) -> JSONResponse:
+        """What is waiting for this reviewer to decide, in their own tenant."""
+        try:
+            principal, tenant = self._reviewer(request)
+        except ToolError as exc:
+            return _error_response(exc)
+        if request.query_params.get("state", "pending") != "pending":
+            return JSONResponse({"error": "unsupported_state", "hint": "only state=pending can be listed"},
+                                status_code=400)
+        try:
+            waiting = await self.approvals.pending(tenant)
+            listed = [
+                {"id": a.id, "tool": a.tool, "caller": a.caller, "delegator": a.delegator,
+                 "created_at": a.created_at, "expires_in_seconds": await self.approvals.expires_in(a.id)}
+                for a in waiting if not _same_party(a, principal)  # not what they could not decide
+            ]
+        except (RedisError, OSError):
+            return JSONResponse({"error": "approvals_unavailable"}, status_code=503)
+        # Arguments are left out: they can hold customer data. The detail view shows them.
+        return JSONResponse({"approvals": listed})
+
     async def approval_detail(self, request: Request) -> JSONResponse:
         """Show a reviewer exactly what they would be approving."""
         try:
@@ -385,11 +410,7 @@ class ScoutServer:
         try:
             principal, tenant = self._reviewer(request)
             approval = await self.approvals.check(request.path_params["approval_id"], tenant)
-            # Whoever asked, and whoever they act for, may not also decide. Comparing only the
-            # subjects let a human approve what their own agent asked for on their behalf.
-            asked_by = {approval.caller, approval.delegator} - {None}
-            decided_by = {principal.subject, principal.delegator} - {None}
-            if asked_by & decided_by:
+            if _same_party(approval, principal):
                 raise PolicyError("self_approval", retryable=False,
                                   hint="the identity that asked, or acts for the one that asked, "
                                        "cannot approve its own request")
@@ -425,6 +446,9 @@ class ScoutServer:
             socket_connect_timeout=self.settings.redis_timeout_s,
         )
         self.approvals = ApprovalGate(self._redis)
+        if self.settings.approval_webhook_url:
+            self.notifier = ApprovalNotifier(self.settings.approval_webhook_url,
+                                             self.settings.approval_webhook_secret)
         # Fail closed: a missing policy file stops the server rather than allowing everything.
         policy = PolicyEngine.from_file(
             self.settings.policy_file, default_deny=self.settings.policy_default_deny
@@ -467,6 +491,8 @@ class ScoutServer:
 
     async def shutdown(self) -> None:
         self.ready = False
+        if self.notifier is not None:
+            await self.notifier.drain()
         await self.cache.disconnect()
         await self.limiter.disconnect()
         if self._redis is not None:
@@ -484,6 +510,13 @@ class ScoutServer:
 
 _STATUS_BY_CODE = {"approval_not_found": 404, "missing_scope": 403, "missing_role": 403, "self_approval": 403,
                    "approval_tenant_mismatch": 403, "approval_already_decided": 409}
+
+
+def _same_party(approval: PendingApproval, principal) -> bool:
+    """Whether the reviewer is, or acts for, whoever asked. Comparing only the subjects let a
+    human approve what their own agent asked for on their behalf."""
+    asked_by = {approval.caller, approval.delegator} - {None}
+    return bool(asked_by & ({principal.subject, principal.delegator} - {None}))
 
 
 def _error_response(exc: ToolError) -> JSONResponse:
@@ -564,6 +597,7 @@ def build_http_app(server: ScoutServer) -> Starlette:
         Route("/metrics", endpoint=metrics_endpoint_for(server.metrics)),
         Route("/mcp", endpoint=_MCPEndpoint(session_manager)),
         # Human review of pending destructive calls. Needs the approval:review scope.
+        Route("/approvals", endpoint=server.approval_inbox, methods=["GET"]),
         Route("/approvals/{approval_id}", endpoint=server.approval_detail, methods=["GET"]),
         Route("/approvals/{approval_id}/{action}", endpoint=server.approval_decide, methods=["POST"]),
     ]

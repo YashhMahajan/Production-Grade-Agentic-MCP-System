@@ -77,6 +77,7 @@ class FakeRedis:
     def __init__(self):
         self.data: dict[str, str] = {}
         self.ttls: dict[str, int] = {}
+        self.zsets: dict[str, dict[str, float]] = {}
 
     async def set(self, key, value, ex=None, nx=False):
         if nx and key in self.data:
@@ -95,6 +96,25 @@ class FakeRedis:
     async def delete(self, key):
         self.data.pop(key, None)
         self.ttls.pop(key, None)
+
+    async def zadd(self, key, mapping):
+        self.zsets.setdefault(key, {}).update(mapping)
+
+    async def zrem(self, key, *members):
+        for m in members:
+            self.zsets.get(key, {}).pop(m, None)
+
+    async def zremrangebyscore(self, key, low, high):
+        z = self.zsets.get(key, {})
+        for member in [m for m, s in z.items() if float(low) <= s <= float(high)]:
+            del z[member]
+
+    async def zrangebyscore(self, key, low, high):
+        z = self.zsets.get(key, {})
+        return [m for m, s in sorted(z.items(), key=lambda kv: kv[1]) if float(low) <= s <= float(high)]
+
+    async def expire(self, key, seconds):
+        return True
 
     async def ping(self):
         return True
