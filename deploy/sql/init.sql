@@ -61,6 +61,14 @@ CREATE ROLE scout_app LOGIN PASSWORD 'scout_app'
 GRANT USAGE ON SCHEMA public TO scout_app;
 GRANT SELECT ON customers, orders, documents TO scout_app;
 
+-- Used by `scout-mcp ingest` to write documents, and nothing else. The server never uses it.
+-- It has no BYPASSRLS: the policy below applies, so it can only write the tenant it sets.
+-- Dev password. Change it, and SCOUT_INGEST_POSTGRES_DSN, for any real deployment.
+CREATE ROLE scout_ingest LOGIN PASSWORD 'scout_ingest'
+    NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+GRANT USAGE ON SCHEMA public TO scout_ingest;
+GRANT SELECT, INSERT, UPDATE ON documents TO scout_ingest;
+
 CREATE POLICY tenant_isolation_customers ON customers
     USING (tenant_id = current_setting('app.tenant_id', true));
 
@@ -108,5 +116,6 @@ CREATE DATABASE keycloak OWNER keycloak;
 -- application role may connect to its own database only.
 REVOKE CONNECT ON DATABASE scout FROM PUBLIC;
 GRANT CONNECT ON DATABASE scout TO scout_app;
+GRANT CONNECT ON DATABASE scout TO scout_ingest;
 REVOKE CONNECT ON DATABASE keycloak FROM PUBLIC;
 GRANT CONNECT ON DATABASE keycloak TO keycloak;

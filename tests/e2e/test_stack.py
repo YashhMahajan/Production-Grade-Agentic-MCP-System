@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import socket
 import time
 
 import httpx
 import pytest
 
-from tests.e2e.conftest import MCP_URL, compose_exec, mcp, token, value
+from scout_mcp.agents.mcp_client import ScoutMCPClient
+from tests.e2e.conftest import (
+    HUMAN_REDIRECT, KEYCLOAK, MCP_URL, claims_of, compose_exec, mcp, sign_in, token, value,
+)
 
 # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -59,7 +63,7 @@ def test_edge_forwards_only_public_paths_and_sets_security_headers(http):
         assert http.get(f"{MCP_URL}{path}").status_code == 404, path
     doc = http.get(f"{MCP_URL}/.well-known/mcp-server").json()
     assert doc["authorization_server"]["issuer"] == "http://keycloak:8080/realms/scout"
-    assert len(doc["tools_summary"]) == 9
+    assert len(doc["tools_summary"]) == 10
 
 
 def test_a_browser_origin_is_refused_at_the_edge(http):
@@ -341,3 +345,110 @@ def test_no_service_is_unhealthy():
     bad = [r["Service"] for r in rows if r.get("Health") not in ("", "healthy")]
     assert not bad, bad
     assert len(rows) >= 12, [r["Service"] for r in rows]
+
+
+# ── Ingest ────────────────────────────────────────────────────────────────
+@pytest.mark.skipif(os.environ.get("SCOUT_E2E_INGESTED") != "1",
+                    reason="CI ingests deploy/seed/sample/warranty.md for acme first")
+async def test_an_ingested_document_is_found_by_its_tenant_and_nobody_else(acme, globex):
+    # Written by `scout-mcp ingest` as the scout_ingest role, read back through row-level
+    # security: the title and body come from the Postgres row, the match from Qdrant.
+    ask = {"query": "how long is the blender warranty", "collection": "ingest_demo", "top_k": 3}
+    mine = value(await acme.call_tool("semantic_search", ask))
+    top = mine["results"][0]
+    assert top["id"] == "doc_acme_warranty" and top["title"] == "Blender warranty"
+    assert "24 month" in top["body"]
+    assert value(await globex.call_tool("semantic_search", ask))["results"] == []
+
+
+# ── postgres.describe ─────────────────────────────────────────────────────
+async def test_describe_lists_the_real_schema_with_foreign_keys(acme):
+    out = value(await acme.call_tool("postgres.describe", {}))
+    tables = {t["name"]: t for t in out["tables"]}
+    assert {"customers", "orders", "documents"} <= set(tables)       # information_schema, as scout_app
+    assert {"id", "customer_id", "total_cents"} <= {c["name"] for c in tables["orders"]["columns"]}
+    assert "customer_id -> customers.id" in tables["orders"]["foreign_keys"]   # pg_constraint
+    assert "keycloak" not in str(out)   # nothing from the other database's roles or tables
+    only = value(await acme.call_tool("postgres.describe", {"tables": ["orders"]}))
+    assert [t["name"] for t in only["tables"]] == ["orders"]
+
+
+# ── People signing in ─────────────────────────────────────────────────────
+def person(bearer: str) -> ScoutMCPClient:
+    return ScoutMCPClient(MCP_URL, bearer, verify=False)  # the tenant comes from the token alone
+
+
+def test_people_sign_in_with_pkce_and_the_token_says_who_they_are():
+    ana, rae, gus = (claims_of(sign_in(u)) for u in ("ana", "rae", "gus"))
+    assert ana["iss"] == "http://keycloak:8080/realms/scout"
+    assert "scout-mcp" in ana["aud"] and ana["exp"] - ana["iat"] == 900
+    assert ana["tenant"] == "acme" and ana["roles"] == ["role:human_agent"]
+    assert rae["tenant"] == "acme" and rae["roles"] == ["role:reviewer"]
+    assert gus["tenant"] == "globex" and gus["roles"] == ["role:human_agent"]
+    assert {"tool:postgres:read", "tool:s3:write", "approval:review"} <= set(ana["scope"].split())
+    assert "act" not in ana  # a person signed in as themselves has no delegator
+
+
+def test_a_sign_in_without_a_code_challenge_is_refused():
+    page = httpx.get(f"{KEYCLOAK}/realms/scout/protocol/openid-connect/auth", follow_redirects=False, params={
+        "client_id": "scout-human", "redirect_uri": HUMAN_REDIRECT, "response_type": "code", "state": "e2e"})
+    location = page.headers.get("location", "")
+    assert page.status_code in (302, 400) and "code=" not in location
+    if page.status_code == 302:
+        assert "error=invalid_request" in location
+
+
+def test_the_server_accepts_a_persons_token():
+    bearer = sign_in("ana")
+    claims = claims_of(bearer)
+    reply = httpx.post(f"{MCP_URL}/mcp", verify=False, headers={
+        "Authorization": f"Bearer {bearer}", "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream"},
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    shown = {k: claims.get(k) for k in ("iss", "aud", "jti", "iat", "exp", "sub", "azp", "typ", "tenant", "roles")}
+    assert reply.status_code == 200, (reply.status_code, reply.headers.get("www-authenticate"), reply.text[:200], shown)
+
+
+async def test_a_person_sees_only_their_own_tenants_rows():
+    ids = {}
+    for user in ("ana", "gus"):
+        async with person(sign_in(user)) as client:
+            rows = value(await client.call_tool("postgres.query", {"sql": "SELECT id FROM customers ORDER BY id"}))
+            ids[user] = [r["id"] for r in rows["rows"]]
+    assert ids == {"ana": ["CUST-1001", "CUST-1002"], "gus": ["CUST-2001"]}
+
+
+async def test_a_person_cannot_approve_their_own_request_but_a_reviewer_can():
+    ana_token, rae_token = sign_in("ana"), sign_in("rae")
+    args = {"key": "attachments/e2e-person.txt", "content": "asked by a person"}
+    async with person(ana_token) as ana:
+        pending = await ana.call_tool("s3.put_object", args)
+        assert not pending.ok and pending.error_code == "pending_approval"
+        approval_id = pending.hint.split("approval_id=")[1].split(".")[0]
+
+        own = httpx.post(f"{MCP_URL}/approvals/{approval_id}/approve", verify=False,
+                         headers={"Authorization": f"Bearer {ana_token}"})
+        assert own.status_code == 403  # she holds the review scope but not the reviewer role
+        decided = httpx.post(f"{MCP_URL}/approvals/{approval_id}/approve", verify=False,
+                             headers={"Authorization": f"Bearer {rae_token}"})
+        assert decided.status_code == 200 and decided.json()["state"] == "approved"
+
+        ran = await ana.call_tool("s3.put_object", {**args, "approval_id": approval_id})
+        assert ran.ok and ran.value["bytes_written"] == len(args["content"])
+
+
+# ── The approval inbox ────────────────────────────────────────────────────
+async def test_the_inbox_lists_a_waiting_request_through_the_edge_without_its_arguments():
+    writer_token, reviewer_token = await token("writer-acme"), await token("reviewer-acme")
+    async with mcp("writer-acme", writer_token) as writer:
+        pending = await writer.call_tool("s3.put_object", {"key": "attachments/inbox.txt", "content": "SECRET-INBOX"})
+        approval_id = pending.hint.split("approval_id=")[1].split(".")[0]
+    headers = {"Authorization": f"Bearer {reviewer_token}"}
+    listed = httpx.get(f"{MCP_URL}/approvals?state=pending", verify=False, headers=headers)
+    assert listed.status_code == 200
+    assert approval_id in {a["id"] for a in listed.json()["approvals"]}
+    assert "SECRET-INBOX" not in listed.text
+    # Another tenant's reviewer is not shown it, and the request is cleaned up.
+    httpx.post(f"{MCP_URL}/approvals/{approval_id}/deny", verify=False, headers=headers)
+    after = httpx.get(f"{MCP_URL}/approvals?state=pending", verify=False, headers=headers)
+    assert approval_id not in {a["id"] for a in after.json()["approvals"]}

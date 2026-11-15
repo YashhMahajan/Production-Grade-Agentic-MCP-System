@@ -9,6 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -102,6 +103,21 @@ class ServerSettings(BaseSettings):
     # retrieval (54.29 vs 53.25) for 3x the parameters and ~2.5x the latency.
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     embedding_cache_dir: str | None = None
+    # At startup, warn if the documents were embedded with a different model than this one.
+    check_embedding_model: bool = True
+
+    # ── Approvals ───────────────────────────────────────────────────────────
+    # Optional: told, with a signed POST, when a call is waiting for a human. The body names the
+    # approval, never its arguments; the reviewer reads those from the server.
+    approval_webhook_url: str | None = None
+    approval_webhook_secret: str | None = None
+
+    @model_validator(mode="after")
+    def _webhook_needs_a_secret(self):
+        if self.approval_webhook_url and not self.approval_webhook_secret:
+            raise ValueError("approval_webhook_url is set but approval_webhook_secret is not: "
+                             "an unsigned webhook cannot be trusted by the receiver")
+        return self
 
     def production_problems(self) -> list[str]:
         """Development settings that must not reach production. Empty means none found."""
@@ -124,6 +140,8 @@ class ServerSettings(BaseSettings):
             problems.append("require_tenant is off")
         if not self.destructive_tool_requires_approval:
             problems.append("destructive_tool_requires_approval is off")
+        if self.approval_webhook_url and not self.approval_webhook_url.startswith("https://"):
+            problems.append("approval_webhook_url is not https")
         return problems
 
 

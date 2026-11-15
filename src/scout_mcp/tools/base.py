@@ -22,16 +22,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextvars import ContextVar
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from scout_mcp.auth.policy import PolicyEngine
-from scout_mcp.errors.framework import PolicyError, ValidationError
+from scout_mcp.errors.framework import PolicyError, ToolError, ValidationError
+
+
+# The caller's subject and roles for the call being served, set by the server. A tool whose
+# answer depends on who asks (postgres.describe) reads it; ``run`` is not told otherwise.
+# Empty outside a server call, and a tool must treat empty as "nobody".
+CALLER: ContextVar[tuple[str, ...]] = ContextVar("scout_caller", default=())
 
 
 class ToolLevel(str, Enum):
@@ -66,6 +73,8 @@ class Tool(ABC):
     # Subclasses MUST override these class attributes.
     meta: ClassVar[ToolMetadata]
     input_schema: ClassVar[type[BaseModel]]
+    # The shape of what ``run`` returns. Published as ``outputSchema`` and checked on every call.
+    output_schema: ClassVar[type[BaseModel] | None] = None
 
     def __init__(self, policy: PolicyEngine):
         self.policy = policy
@@ -81,6 +90,24 @@ class Tool(ABC):
                 code="invalid_arguments",
                 retryable=False,
                 hint=_summarise_pydantic_error(exc),
+                context={"tool": self.meta.name},
+            ) from exc
+
+    def check_output(self, result: dict) -> None:
+        """Raise if ``result`` does not fit ``output_schema``.
+
+        Clients that read ``outputSchema`` reject a result that does not fit, with an error
+        that names no tool. Failing here says which tool broke its contract.
+        """
+        if self.output_schema is None:
+            return
+        try:
+            self.output_schema.model_validate(result, strict=True)
+        except PydanticValidationError as exc:
+            raise ToolError(
+                "output_schema_violation", retryable=False,
+                hint=f"{self.meta.name} returned a result that does not match its output schema: "
+                     f"{_summarise_pydantic_error(exc)}",
                 context={"tool": self.meta.name},
             ) from exc
 

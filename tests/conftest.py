@@ -34,9 +34,9 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def principal(tenant="acme", scopes=(), roles=(), subject="agent:test") -> Principal:
+def principal(tenant="acme", scopes=(), roles=(), subject="agent:test", delegator="user:ana") -> Principal:
     return Principal(
-        subject=subject, delegator="user:ana", tenant=tenant, scopes=frozenset(scopes),
+        subject=subject, delegator=delegator, tenant=tenant, scopes=frozenset(scopes),
         token_id="jti-1", issued_at=0, expires_at=2**31, roles=frozenset(roles),
     )
 
@@ -50,11 +50,24 @@ TOKENS = {
     "noscope": principal(scopes=(), roles=("role:support_copilot",)),
     "writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",)),
     # Reviewers hold approval:review and are a different subject from the writer.
-    "reviewer": principal(scopes=("approval:review",), subject="user:reviewer"),
-    "reviewer_globex": principal(tenant="globex", scopes=("approval:review",), subject="user:g"),
+    # A human signed in as themselves has no delegator.
+    "reviewer": principal(scopes=("approval:review",), subject="user:reviewer", delegator=None, roles=("role:reviewer",)),
+    "reviewer_globex": principal(tenant="globex", scopes=("approval:review",), subject="user:g", delegator=None, roles=("role:reviewer",)),
+    # user:ana is who the "writer" agent acts for (its delegator), and may review.
+    "ana_reviewer": principal(scopes=("approval:review",), subject="user:ana", delegator=None, roles=("role:reviewer",)),
+    # An agent reviewing on behalf of the human the requester is, or acts for.
+    "bot_for_ana": principal(scopes=("approval:review",), subject="agent:review-bot", delegator="user:ana", roles=("role:reviewer",)),
+    # A human writing as themselves: the identity on the request is user:ana.
+    "ana_writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",), subject="user:ana", delegator=None),
     # Same subject as "writer": used to show that nobody approves their own request.
-    "self_reviewer": principal(scopes=("approval:review",)),
-    "no_review_scope": principal(scopes=(), subject="user:nope"),
+    "self_reviewer": principal(scopes=("approval:review",), roles=("role:reviewer",)),
+    "no_review_scope": principal(scopes=(), subject="user:nope", roles=("role:reviewer",)),
+    # Holds the scope but is not a reviewer: the scope alone must not be enough.
+    "scope_only": principal(scopes=("approval:review",), subject="user:scope-only", delegator=None),
+    # The copilot's read scopes plus one more, for tests that ask what the server still
+    # refuses when a token is given more than it should have.
+    "copilot_fetch": principal(scopes=(PG, ES, VEC, "tool:http:fetch"), roles=("role:support_copilot",)),
+    "copilot_write": principal(scopes=(PG, ES, VEC, "tool:s3:write"), roles=("role:human_agent",)),
 }
 
 
@@ -64,6 +77,7 @@ class FakeRedis:
     def __init__(self):
         self.data: dict[str, str] = {}
         self.ttls: dict[str, int] = {}
+        self.zsets: dict[str, dict[str, float]] = {}
 
     async def set(self, key, value, ex=None, nx=False):
         if nx and key in self.data:
@@ -82,6 +96,25 @@ class FakeRedis:
     async def delete(self, key):
         self.data.pop(key, None)
         self.ttls.pop(key, None)
+
+    async def zadd(self, key, mapping):
+        self.zsets.setdefault(key, {}).update(mapping)
+
+    async def zrem(self, key, *members):
+        for m in members:
+            self.zsets.get(key, {}).pop(m, None)
+
+    async def zremrangebyscore(self, key, low, high):
+        z = self.zsets.get(key, {})
+        for member in [m for m, s in z.items() if float(low) <= s <= float(high)]:
+            del z[member]
+
+    async def zrangebyscore(self, key, low, high):
+        z = self.zsets.get(key, {})
+        return [m for m, s in sorted(z.items(), key=lambda kv: kv[1]) if float(low) <= s <= float(high)]
+
+    async def expire(self, key, seconds):
+        return True
 
     async def ping(self):
         return True
@@ -117,6 +150,7 @@ async def app_client(monkeypatch, tmp_path):
         policy_file=str(ROOT / "config" / "policy.yaml"),
         audit_log_path=str(tmp_path / "audit.jsonl"),
         retry_base_delay_ms=1,
+        check_embedding_model=False,
     )
     server = ScoutServer(settings)
     app = build_http_app(server)

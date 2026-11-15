@@ -1,0 +1,162 @@
+# Cases for config/policy.yaml. Run them with `scout-mcp policy test`; CI runs them on every push.
+#
+# Each case asks the engine one question and says what the answer must be.
+#   subjects  the caller and its roles, as the server passes them
+#   resource  the table or key the tool names (the tenant is added by the engine)
+#   expect    allow | deny
+#   rule      optional: the rule that must decide. Leave it out to check only allow or deny.
+#             `rule: null` means no rule matched.
+# Every rule in policy.yaml needs a case it decides, so a rule nobody tested shows up here.
+
+cases:
+  # ── Support copilot ──────────────────────────────────────────────────────
+  - name: copilot reads orders in its own tenant
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:postgres:read"
+    resource: orders
+    expect: allow
+    rule: support-agents-build-context
+
+  - name: copilot searches elasticsearch and qdrant
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:elasticsearch:read"
+    resource: tickets
+    expect: allow
+    rule: support-agents-build-context
+
+  - name: copilot cannot read a column listed as PII
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:postgres:read"
+    resource: customers
+    context: { sql: "SELECT id, ssn FROM customers", columns: [select, id, ssn, from, customers] }
+    expect: deny
+    rule: no-pii-columns-for-support-agents
+
+  - name: nobody can drop a table, whatever else allows them
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:postgres:read"
+    resource: orders
+    context: { sql: "DROP TABLE orders", columns: [drop, table, orders] }
+    expect: deny
+    rule: no-one-can-drop-tables
+
+  # ── S3: top-level docs/ and tickets/ only ────────────────────────────────
+  - name: copilot reads a doc
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:s3:read"
+    resource: docs/refund-policy.md
+    expect: allow
+    rule: support-agents-can-read-s3
+
+  - name: copilot reads a nested doc
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:s3:read"
+    resource: docs/faq/shipping.md
+    expect: allow
+
+  - name: copilot cannot read a key that only has docs/ deeper inside it
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:s3:read"
+    resource: x/docs/y
+    expect: deny
+    rule: null
+
+  - name: copilot cannot read tickets/ nested under another folder
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:s3:read"
+    resource: finance/tickets/payroll.csv
+    expect: deny
+
+  - name: a key with a .. segment is never matched by a tenant rule
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:s3:read"
+    resource: docs/../finance/payroll.csv
+    expect: deny
+
+  - name: copilot cannot read a top-level folder that is not allowed
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:s3:read"
+    resource: billing/invoices.csv
+    expect: deny
+
+  # ── S3 writes ────────────────────────────────────────────────────────────
+  - name: a human agent may write under attachments/
+    subjects: [user:ana, "role:human_agent"]
+    tenant: acme
+    action: "tool:s3:write"
+    resource: attachments/note.txt
+    expect: allow
+    rule: support-agents-can-write-attachments
+
+  - name: a human agent may not write under a nested attachments/
+    subjects: [user:ana, "role:human_agent"]
+    tenant: acme
+    action: "tool:s3:write"
+    resource: x/attachments/note.txt
+    expect: deny
+
+  - name: the copilot cannot write at all
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:s3:write"
+    resource: attachments/note.txt
+    expect: deny
+    rule: null
+
+  # ── Analysts ─────────────────────────────────────────────────────────────
+  - name: an analyst reads the analytics schema
+    subjects: [user:lee, "role:analyst"]
+    tenant: acme
+    action: "tool:postgres:read"
+    resource: analytics/orders
+    expect: allow
+    rule: analysts-read-postgres
+
+  - name: an analyst cannot read operational tables
+    subjects: [user:lee, "role:analyst"]
+    tenant: acme
+    action: "tool:postgres:read"
+    resource: orders
+    expect: deny
+    rule: null
+
+  # ── Outbound HTTP and impersonation ──────────────────────────────────────
+  - name: the copilot may use http.fetch (the outbound allowlist narrows it further)
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:http:fetch"
+    resource: "*"
+    expect: allow
+    rule: support-agents-can-fetch-docs
+
+  - name: an analyst cannot use http.fetch
+    subjects: [user:lee, "role:analyst"]
+    tenant: acme
+    action: "tool:http:fetch"
+    resource: "*"
+    expect: deny
+
+  - name: only internal admins may impersonate a tenant
+    subjects: [user:root, "role:internal_admin"]
+    tenant: acme
+    action: "tenant:*:impersonate"
+    resource: "*"
+    expect: allow
+    rule: internal-admin-can-impersonate
+
+  - name: the copilot cannot impersonate a tenant
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tenant:*:impersonate"
+    resource: "*"
+    expect: deny

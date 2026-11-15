@@ -16,7 +16,7 @@ composed tool when it exists — exactly the behaviour we want.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,23 @@ class SemanticSearchInput(BaseModel):
     )
 
 
+class SemanticResult(BaseModel):
+    """One passage. Hydrated results carry title, body and url; the others carry a preview."""
+
+    id: int | str
+    score: float
+    title: str | None = None
+    body: str | None = None
+    url: str | None = None
+    preview: str | None = None
+    metadata: dict[str, Any]
+
+
+class SemanticSearchOutput(BaseModel):
+    query: str
+    results: list[SemanticResult]
+
+
 class SemanticSearchTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="semantic_search",
@@ -54,6 +71,7 @@ class SemanticSearchTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = SemanticSearchInput
+    output_schema: ClassVar[type[BaseModel] | None] = SemanticSearchOutput
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)

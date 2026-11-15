@@ -11,7 +11,7 @@ natural-language queries (where dense wins).
 # score = 1 / (k + rank) per retriever, summed across retrievers. k=60 is the canonical default from the original paper.
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,20 @@ class HybridSearchInput(BaseModel):
     rrf_k: int = Field(60, ge=10, le=200)
 
 
+class HybridResult(BaseModel):
+    id: str
+    rrf_score: float
+    lexical_rank: int | None
+    dense_rank: int | None
+    source: dict[str, Any]
+
+
+class HybridSearchOutput(BaseModel):
+    query: str
+    results: list[HybridResult]
+    fused_from: int
+
+
 class HybridSearchTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="hybrid_search",
@@ -48,6 +62,7 @@ class HybridSearchTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = HybridSearchInput
+    output_schema: ClassVar[type[BaseModel] | None] = HybridSearchOutput
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)
@@ -81,7 +96,10 @@ class HybridSearchTool(Tool):
 
         # Build (id → rank) maps.
         lexical_ranks = {hit["id"]: rank for rank, hit in enumerate(es_result["hits"], start=1)}
-        dense_ranks = {str(m["doc_id"]): rank for rank, m in enumerate(vs_result["matches"], start=1)}
+        # A document cut into chunks can match more than once. Its best chunk sets its rank.
+        dense_ranks: dict[str, int] = {}
+        for rank, m in enumerate(vs_result["matches"], start=1):
+            dense_ranks.setdefault(str(m["doc_id"]), rank)
 
         # Fuse with RRF.
         all_ids = set(lexical_ranks) | set(dense_ranks)

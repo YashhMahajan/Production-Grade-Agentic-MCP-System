@@ -50,6 +50,20 @@ class Rule:
     conditions: dict[str, Any] = None  # type: ignore[assignment]
 
 
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """What the engine decided, and which rule decided it.
+
+    ``rule`` is the deny rule that blocked the call, or the first allow rule that matched.
+    It is None when nothing matched (a default denial, or an allow because default-deny is off).
+    """
+
+    allowed: bool
+    rule: str | None = None
+    code: str | None = None
+    hint: str | None = None
+
+
 class PolicyEngine:
     """Evaluates rules in order; deny beats allow beats default-deny."""
 
@@ -73,55 +87,51 @@ class PolicyEngine:
         ]
         return cls(rules, default_deny=default_deny)
 
-    def check(
+    def decide(
         self, subject: str | Sequence[str], tenant: str, action: str, resource: str, context: dict
-    ) -> None:
-        """Raise :class:`PolicyError` if the call is not allowed.
+    ) -> Decision:
+        """Evaluate the rules and say what happened, without raising.
 
         Matching rules are partitioned into allow and deny. Deny always wins.
-        If no allow rule matches and default_deny is on, the call is rejected.
+        If no allow rule matches and default_deny is on, the call is not allowed.
         """
-
-        # 1. Walk every rule, check if the (subject, action, resource) triple matches.
-        # 2. If the rule has conditions, check those too.
-        # 3. Partition matches into allow and deny buckets.
-        # 4. Deny wins immediately. If any deny rule matches, reject with a PolicyError.
-        # 5. Default deny wins if no allow matches. No allow rule = no permission.
-
         # A caller is its own subject plus every role it holds; any of them may match a rule.
         subjects = (subject,) if isinstance(subject, str) else tuple(subject)
         matched_allow: list[Rule] = []
         matched_deny: list[Rule] = []
 
         for rule in self.rules:
-            if not self._matches(rule, subjects, action, f"tenant:{tenant}/{resource}"):
+            if not self._matches(rule, subjects, action, tenant, resource):
                 continue
             if rule.conditions and not self._conditions_match(rule.conditions, context):
                 continue
             (matched_deny if rule.effect == "deny" else matched_allow).append(rule)
 
         if matched_deny:
-            raise PolicyError(
-                "denied_by_policy",
-                retryable=False,
-                hint=f"rule {matched_deny[0].id} denies this action",
-            )
+            rule = matched_deny[0]
+            return Decision(False, rule.id, "denied_by_policy", f"rule {rule.id} denies this action")
         if not matched_allow and self.default_deny:
-            raise PolicyError(
-                "not_authorized",
-                retryable=False,
-                hint=f"no policy rule allows {action} on {resource}",
-            )
+            return Decision(False, None, "not_authorized",
+                            f"no policy rule allows {action} on {resource}")
+        return Decision(True, matched_allow[0].id if matched_allow else None)
+
+    def check(
+        self, subject: str | Sequence[str], tenant: str, action: str, resource: str, context: dict
+    ) -> None:
+        """Raise :class:`PolicyError` if the call is not allowed."""
+        decision = self.decide(subject, tenant, action, resource, context)
+        if not decision.allowed:
+            raise PolicyError(decision.code, retryable=False, hint=decision.hint)
 
     # ── Pattern matching ──────────────────────────────────────────────────
     # the glob is deliberately limited (exact match, trailing star, or bare *). No full regex, no complex expressions.
     
     @staticmethod
-    def _matches(rule: Rule, subjects: tuple[str, ...], action: str, resource: str) -> bool:
+    def _matches(rule: Rule, subjects: tuple[str, ...], action: str, tenant: str, resource: str) -> bool:
         return (
             any(_glob_any(rule.subjects, s) for s in subjects)
             and _glob_any(rule.actions, action)
-            and _glob_any(rule.resources, resource)
+            and _resource_matches(rule.resources, tenant, resource, deny=rule.effect == "deny")
         )
 
     # _conditions_match is a switch over known condition names with explicit handlers. Adding a new condition type is a code change, not a config change, which is what you want for security-sensitive logic.
@@ -151,3 +161,27 @@ def _glob_any(patterns: tuple[str, ...], value: str) -> bool:
     as a literal, so no per-tenant rule in policy.yaml could ever match.
     """
     return any(fnmatchcase(value, pat) for pat in patterns)
+
+
+def _resource_matches(patterns: tuple[str, ...], tenant: str, resource: str, deny: bool = False) -> bool:
+    """Match a resource against rule patterns, keeping the tenant and the path apart.
+
+    ``tenant:*/docs/*`` means any tenant, then a top-level ``docs/`` folder. Matching it
+    against the joined string ``tenant:acme/x/docs/y`` let the first ``*`` swallow ``acme/x``,
+    so any key with ``docs`` somewhere inside matched. The tenant is matched on its own, and
+    the rest of the pattern is matched against the resource alone. A resource with a ``..``
+    segment never matches a tenant pattern of an allow rule, so it cannot step out of a folder.
+    A deny rule still matches it: skipping a deny would let ``secret/../secret/x`` past a rule
+    that blocks ``secret/*``. A bare pattern such as ``*`` still matches anything.
+    """
+    traversal = ".." in resource.split("/")
+    for pattern in patterns:
+        if pattern.startswith("tenant:") and "/" in pattern:
+            tenant_pattern, _, path_pattern = pattern.partition("/")
+            if traversal and not deny:
+                continue
+            if fnmatchcase(f"tenant:{tenant}", tenant_pattern) and fnmatchcase(resource, path_pattern):
+                return True
+        elif fnmatchcase(f"tenant:{tenant}/{resource}", pattern):
+            return True
+    return False

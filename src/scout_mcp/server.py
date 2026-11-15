@@ -24,9 +24,10 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 
 import uvicorn
+from elasticsearch import AsyncElasticsearch
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, ListToolsResult, TextContent
+from mcp.types import CallToolResult, GetPromptResult, ListPromptsResult, ListToolsResult, TextContent
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from starlette.applications import Starlette
@@ -49,15 +50,18 @@ from scout_mcp.errors.framework import (
     UpstreamError,
     to_call_tool_result,
 )
-from scout_mcp.governance.approval import ApprovalGate, PendingApprovalError
+from scout_mcp.governance.approval import ApprovalGate, PendingApproval, PendingApprovalError
+from scout_mcp.governance.webhook import ApprovalNotifier
 from scout_mcp.governance.tenant import TenantMiddleware
 from scout_mcp.observability.audit import AuditLogger
 from scout_mcp.observability.metrics import MetricsRegistry, metrics_endpoint_for
 from scout_mcp.observability.tracing import current_trace_id, get_tracer, init_tracing
+from scout_mcp.prompts import PROMPTS, get_prompt
 from scout_mcp.ratelimit.limiter import RateLimiter
 from scout_mcp.reliability.atba import ATBA
 from scout_mcp.reliability.circuit_breaker import CircuitBreakerRegistry, State
 from scout_mcp.reliability.retry import with_retry
+from scout_mcp.tools.base import CALLER
 from scout_mcp.tools.registry import ToolRegistry
 from scout_mcp.validation.schemas import ToolCallEnvelope
 
@@ -84,8 +88,12 @@ def _deadline_ms(value: str | None) -> int | None:
     return ms if ms is not None and ms > 0 else None
 
 
-# Scope that lets a human review pending approvals.
+# What it takes to review pending approvals: the scope, and the role. The scope is something a
+# client can request; the role comes from the identity provider's record of the person, so
+# holding the scope alone (for example a public sign-in client that offers it to everyone) is
+# not enough.
 APPROVAL_REVIEW_SCOPE = "approval:review"
+APPROVAL_REVIEW_ROLE = "role:reviewer"
 
 
 @dataclass(frozen=True)
@@ -115,6 +123,8 @@ class ScoutServer:
             settings.service_name,
             on_list_tools=self._on_list_tools,
             on_call_tool=self._on_call_tool,
+            on_list_prompts=self._on_list_prompts,
+            on_get_prompt=self._on_get_prompt,
         )
 
         # Shared singletons used across requests.
@@ -127,6 +137,7 @@ class ScoutServer:
         # Built in startup(): they open files and connections.
         self.audit: AuditLogger | None = None
         self.approvals: ApprovalGate | None = None
+        self.notifier: ApprovalNotifier | None = None  # set at startup when a webhook is configured
         self._redis: Redis | None = None
         self.ready = False
 
@@ -156,6 +167,20 @@ class ScoutServer:
         return ListToolsResult(
             tools=self.registry.list_visible(tenant=caller.tenant, scopes=caller.scopes)
         )
+
+    async def _on_list_prompts(self, ctx, _params) -> ListPromptsResult:
+        self._context_from(ctx.request)  # a verified caller, like every other request
+        return ListPromptsResult(prompts=PROMPTS)
+
+    async def _on_get_prompt(self, ctx, params) -> GetPromptResult:
+        caller = self._context_from(ctx.request)
+        # The prompt may only name read-only tools this caller can see.
+        tools = {
+            spec.name: self.registry.get(spec.name).meta.description
+            for spec in self.registry.list_visible(tenant=caller.tenant, scopes=caller.scopes)
+            if self.registry.get(spec.name).meta.read_only
+        }
+        return get_prompt(params.name, params.arguments, tools)
 
     async def _on_call_tool(self, ctx, params) -> CallToolResult:
         try:
@@ -191,6 +216,7 @@ class ScoutServer:
         """One span and one audit record per call, whatever the outcome."""
         started = time.monotonic()
         status, error_code = "ok", None
+        caller_token = CALLER.set((envelope.caller, *envelope.roles))
         # Label by registered name only: callers choose the tool string, and an
         # unbounded set of span names or metric labels would grow without limit.
         label = envelope.tool if envelope.tool in self.registry else "unknown"
@@ -206,6 +232,7 @@ class ScoutServer:
                 self.metrics.calls_total.labels(tool=label, status=exc.code).inc()
                 raise
             finally:
+                CALLER.reset(caller_token)
                 if self.audit is not None:
                     self.audit.record(
                         trace_id=trace_id,
@@ -293,6 +320,7 @@ class ScoutServer:
         # Backends return datetimes, UUIDs and Decimals, which the MCP SDK cannot encode.
         # Normalise once here so the response and the cache hold the same plain JSON.
         result = json.loads(json.dumps(result, default=str))
+        tool.check_output(result)
         # A result that says part of it failed is not stored: one backend blip would
         # otherwise be served to every caller until the entry expires.
         if tool.cacheable and not result.get("partial_errors"):
@@ -336,6 +364,8 @@ class ScoutServer:
                 tenant=envelope.tenant, caller=envelope.caller, delegator=envelope.delegator,
                 tool=tool_name, arguments=payload,
             )
+            if self.notifier is not None:
+                self.notifier.notify(approval)  # in the background: never holds up the agent
             raise PendingApprovalError(approval)
         approval = await self.approvals.check(approval_id, envelope.tenant)
         if approval.state == "consumed":
@@ -355,7 +385,31 @@ class ScoutServer:
         if APPROVAL_REVIEW_SCOPE not in principal.scopes:
             raise PolicyError("missing_scope", retryable=False,
                               hint=f"token lacks scope {APPROVAL_REVIEW_SCOPE}")
+        if APPROVAL_REVIEW_ROLE not in principal.roles:
+            raise PolicyError("missing_role", retryable=False,
+                              hint=f"token lacks role {APPROVAL_REVIEW_ROLE}")
         return principal, request.state.tenant
+
+    async def approval_inbox(self, request: Request) -> JSONResponse:
+        """What is waiting for this reviewer to decide, in their own tenant."""
+        try:
+            principal, tenant = self._reviewer(request)
+        except ToolError as exc:
+            return _error_response(exc)
+        if request.query_params.get("state", "pending") != "pending":
+            return JSONResponse({"error": "unsupported_state", "hint": "only state=pending can be listed"},
+                                status_code=400)
+        try:
+            waiting = await self.approvals.pending(tenant)
+            listed = [
+                {"id": a.id, "tool": a.tool, "caller": a.caller, "delegator": a.delegator,
+                 "created_at": a.created_at, "expires_in_seconds": await self.approvals.expires_in(a.id)}
+                for a in waiting if not _same_party(a, principal)  # not what they could not decide
+            ]
+        except (RedisError, OSError):
+            return JSONResponse({"error": "approvals_unavailable"}, status_code=503)
+        # Arguments are left out: they can hold customer data. The detail view shows them.
+        return JSONResponse({"approvals": listed})
 
     async def approval_detail(self, request: Request) -> JSONResponse:
         """Show a reviewer exactly what they would be approving."""
@@ -373,9 +427,10 @@ class ScoutServer:
         try:
             principal, tenant = self._reviewer(request)
             approval = await self.approvals.check(request.path_params["approval_id"], tenant)
-            if approval.caller == principal.subject:
+            if _same_party(approval, principal):
                 raise PolicyError("self_approval", retryable=False,
-                                  hint="the caller that asked cannot approve its own request")
+                                  hint="the identity that asked, or acts for the one that asked, "
+                                       "cannot approve its own request")
             if approval.state != "pending":
                 raise PolicyError("approval_already_decided", retryable=False,
                                   hint=f"approval is already {approval.state}")
@@ -408,12 +463,17 @@ class ScoutServer:
             socket_connect_timeout=self.settings.redis_timeout_s,
         )
         self.approvals = ApprovalGate(self._redis)
+        if self.settings.approval_webhook_url:
+            self.notifier = ApprovalNotifier(self.settings.approval_webhook_url,
+                                             self.settings.approval_webhook_secret)
         # Fail closed: a missing policy file stops the server rather than allowing everything.
         policy = PolicyEngine.from_file(
             self.settings.policy_file, default_deny=self.settings.policy_default_deny
         )
         await self.registry.discover(policy)
         await self._preload_embedder()
+        if self.settings.check_embedding_model:
+            await self._check_embedding_model()
         self.ready = True
         logger.info("scout-mcp ready", extra={"tools": len(self.registry)})
 
@@ -426,8 +486,30 @@ class ScoutServer:
         except Exception:
             logger.exception("embedding model failed to load; search tools will fail")
 
+    async def _check_embedding_model(self) -> None:
+        """Warn if the documents were embedded with another model. Never stops the server."""
+        from scout_mcp.ingest import DEFAULT_COLLECTION, embedding_mismatch
+
+        password = self.settings.elasticsearch_password
+        es = AsyncElasticsearch(
+            self.settings.elasticsearch_url,
+            basic_auth=(self.settings.elasticsearch_user, password) if password else None,
+            request_timeout=3, max_retries=0,
+        )
+        try:
+            warning = await embedding_mismatch(es, DEFAULT_COLLECTION, self.settings.embedding_model)
+        except Exception as exc:
+            logger.warning("could not check which embedding model the documents use: %s", exc)
+            return
+        finally:
+            await es.close()
+        if warning:
+            logger.warning(warning)
+
     async def shutdown(self) -> None:
         self.ready = False
+        if self.notifier is not None:
+            await self.notifier.drain()
         await self.cache.disconnect()
         await self.limiter.disconnect()
         if self._redis is not None:
@@ -443,8 +525,15 @@ class ScoutServer:
             return False
 
 
-_STATUS_BY_CODE = {"approval_not_found": 404, "missing_scope": 403, "self_approval": 403,
+_STATUS_BY_CODE = {"approval_not_found": 404, "missing_scope": 403, "missing_role": 403, "self_approval": 403,
                    "approval_tenant_mismatch": 403, "approval_already_decided": 409}
+
+
+def _same_party(approval: PendingApproval, principal) -> bool:
+    """Whether the reviewer is, or acts for, whoever asked. Comparing only the subjects let a
+    human approve what their own agent asked for on their behalf."""
+    asked_by = {approval.caller, approval.delegator} - {None}
+    return bool(asked_by & ({principal.subject, principal.delegator} - {None}))
 
 
 def _error_response(exc: ToolError) -> JSONResponse:
@@ -525,6 +614,7 @@ def build_http_app(server: ScoutServer) -> Starlette:
         Route("/metrics", endpoint=metrics_endpoint_for(server.metrics)),
         Route("/mcp", endpoint=_MCPEndpoint(session_manager)),
         # Human review of pending destructive calls. Needs the approval:review scope.
+        Route("/approvals", endpoint=server.approval_inbox, methods=["GET"]),
         Route("/approvals/{approval_id}", endpoint=server.approval_detail, methods=["GET"]),
         Route("/approvals/{approval_id}/{action}", endpoint=server.approval_decide, methods=["POST"]),
     ]

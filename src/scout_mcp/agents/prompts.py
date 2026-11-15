@@ -54,7 +54,8 @@ Preferred tool order:
    calling individual atomic tools.
 2. hybrid_search or semantic_search — for open-ended documentation lookups.
 3. Atomic tools (postgres.query, elasticsearch.search, vector.search) only
-   when the composed tools do not fit.
+   when the composed tools do not fit. Call postgres.describe first to see which
+   tables and columns you may read; do not guess column names in SQL.
 
 Never construct SQL that contains INSERT, UPDATE, DELETE, DROP, or TRUNCATE.
 Never set a top_k above 20.

@@ -58,15 +58,23 @@ Elasticsearch is the largest by a wide margin, and Scout itself is second becaus
 
 `python scripts/bench_pipeline.py 1000` runs the request path in one process with a faked, instant tool. It isolates what Scout itself costs.
 
-Apple M2, Python 3.11.15, `mcp` 1.30.0. Three runs of 1000 calls, milliseconds:
+arm64 macOS, Python 3.11.15, `mcp` 2.3.0. Three runs of 1000 calls, milliseconds:
 
 | Scenario | p50 | p95 |
 |----------|-----|-----|
-| `GET /healthz` (HTTP stack only) | 0.44 to 0.45 | 0.51 to 0.57 |
-| `tools/call`, cache miss | 2.76 to 2.78 | 3.27 to 3.94 |
-| `tools/call`, cache hit | 2.72 to 2.75 | 3.17 to 3.39 |
+| `GET /healthz` (HTTP stack only) | 0.43 to 0.46 | 0.52 to 0.54 |
+| `tools/call`, cache miss | 1.87 to 1.92 | 2.12 to 2.48 |
+| `tools/call`, cache hit | 1.75 to 1.77 | 1.91 to 1.97 |
 
-A tool call costs about 2.3 ms more than the bare HTTP stack. I expect most of that is stateless mode, where the MCP session is rebuilt per request so any replica can serve it, but I have not profiled it. The audit log's stdout write is inside these timings. Hit and miss are equal here because the faked tool returns instantly.
+The 0.3.0 figures, taken on `mcp` 1.30.0, were 2.76 to 2.78 ms (miss) and 2.72 to 2.75 ms (hit) at p50, so these are about 30 to 35% lower. Between the two I moved to the 2.x SDK and made the 0.4.0 review fixes, and I did not isolate which change did it, so I do not credit the SDK.
+
+A tool call costs about 1.4 ms more than the bare HTTP stack. I expect most of that is stateless mode, where the MCP session is rebuilt per request so any replica can serve it, but I have not profiled it. The audit log's stdout write is inside these timings. Hit and miss are close here because the faked tool returns instantly.
+
+**What the output-schema check costs.** The server now validates every result against the tool's schema. I ran the benchmark before and after adding it, in one sitting: cache-miss p50 was 1.87 ms before and 1.86 ms after, p95 2.13 ms and 2.05 ms (one run of 1000 each). The difference is inside the run-to-run spread above, so I report no cost, not a saving.
+
+**`postgres.describe`.** It is never cached, so every call reaches Postgres. In the CI run that proved the sign-in work, 200 calls through the TLS edge with real Postgres took 4.96 ms at p50, 6.17 ms at p95 and 8.93 ms at p99. That is one run on a shared runner, where a row can move by about 40%.
+
+**Ingest.** In CI, the first `scout-mcp ingest` of the sample file embedded 1 chunk, and running it again embedded 0 and skipped the document, because the content hash had not changed. The sample is one chunk long, so this shows the skip, not a throughput figure.
 
 ## Measured: install size and dependencies
 
@@ -95,4 +103,5 @@ Arithmetic from those figures: retrieval is 1.04 points lower (about 2%). The mo
 - Variance beyond three runs. Three samples show the spread (up to about 40% on a row) but not its distribution.
 - Load beyond 16 clients, and more than one Scout replica.
 - A slow, realistic warehouse query, to see what the cache saves there.
-- The embedding step on its own, and the cost of Postgres row-level security on a large table.
+- The embedding step on its own, `scout-mcp ingest` throughput on a real corpus, and the cost of Postgres row-level security on a large table.
+- `postgres.describe` under concurrent load. Its single-client latency is measured above.

@@ -14,7 +14,9 @@ confirmation step is not optional ceremony, it is the control surface.
 from __future__ import annotations
 
 import json
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -71,8 +73,9 @@ class ApprovalGate:
     remaining TTL, so a decision never extends the hour the request had.
     """
 
-    def __init__(self, redis: Redis):
+    def __init__(self, redis: Redis, clock: Callable[[], float] = time.time):
         self._redis = redis
+        self._clock = clock  # seconds since the epoch; tests replace it
 
     async def request(self, *, tenant: str, caller: str, delegator: str | None,
                       tool: str, arguments: dict[str, Any]) -> PendingApproval:
@@ -88,7 +91,28 @@ class ApprovalGate:
         await self._redis.set(
             self._key(approval.id), json.dumps(asdict(approval)), ex=APPROVAL_TTL_SECONDS
         )
+        # The tenant's inbox: ids scored by when each expires, so the list needs no scan of all keys.
+        index = self._index_key(tenant)
+        await self._redis.zadd(index, {approval.id: self._clock() + APPROVAL_TTL_SECONDS})
+        await self._redis.expire(index, APPROVAL_TTL_SECONDS)
         return approval
+
+    async def pending(self, tenant: str) -> list[PendingApproval]:
+        """This tenant's requests that are still waiting, the one that expires soonest first."""
+        index, now = self._index_key(tenant), self._clock()
+        await self._redis.zremrangebyscore(index, "-inf", now)  # forget what has expired
+        waiting = []
+        for approval_id in await self._redis.zrangebyscore(index, now, "+inf"):
+            try:
+                approval = await self._with_state(await self._load(approval_id))
+            except PolicyError:
+                continue  # expired between the two reads
+            if approval.tenant == tenant and approval.state == "pending":
+                waiting.append(approval)
+        return waiting
+
+    async def expires_in(self, approval_id: str) -> int:
+        return await self._remaining_ttl(approval_id)
 
     async def check(self, approval_id: str, expected_tenant: str) -> PendingApproval:
         """Look up an approval, enforce the tenant, and report its current state."""
@@ -135,6 +159,7 @@ class ApprovalGate:
                 retryable=False,
                 hint="another reviewer decided this approval first",
             )
+        await self._redis.zrem(self._index_key(approval.tenant), approval.id)  # off the inbox
         return await self._with_state(approval)
 
     async def _with_state(self, approval: PendingApproval) -> PendingApproval:
@@ -160,6 +185,10 @@ class ApprovalGate:
     async def _remaining_ttl(self, approval_id: str) -> int:
         ttl = await self._redis.ttl(self._key(approval_id))
         return ttl if ttl and ttl > 0 else 1
+
+    @staticmethod
+    def _index_key(tenant: str) -> str:
+        return f"scout:approvals:{tenant}"
 
     @staticmethod
     def _key(approval_id: str) -> str:

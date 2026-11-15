@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from elasticsearch import AsyncElasticsearch, ApiError, TransportError
 from pydantic import BaseModel, Field
@@ -21,6 +21,18 @@ class ElasticsearchSearchInput(BaseModel):
     fields: list[str] | None = Field(default=None)
 
 
+class ElasticsearchHit(BaseModel):
+    id: str
+    score: float | None
+    source: dict[str, Any]
+
+
+class ElasticsearchSearchOutput(BaseModel):
+    total: int
+    took_ms: int
+    hits: list[ElasticsearchHit]
+
+
 class ElasticsearchSearchTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="elasticsearch.search",
@@ -34,6 +46,7 @@ class ElasticsearchSearchTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = ElasticsearchSearchInput
+    output_schema: ClassVar[type[BaseModel] | None] = ElasticsearchSearchOutput
 
     _client: AsyncElasticsearch | None = None
 

@@ -14,7 +14,9 @@ registry scanning for public tools will see only what policy allows it to see.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
+from importlib.metadata import entry_points
 
 from mcp.types import Tool as MCPToolSpec
 from mcp.types import ToolAnnotations
@@ -25,17 +27,46 @@ from scout_mcp import __version__
 from scout_mcp.errors.framework import ToolNotFoundError
 from scout_mcp.tools.base import Tool
 
+logger = logging.getLogger(__name__)
+
+# Other packages add tools by listing a Tool subclass under this entry-point group.
+PLUGIN_GROUP = "scout_mcp.tools"
+
+
+def contract_problems(tool: Tool) -> list[str]:
+    """Ways a tool breaks the contract every tool must meet, or an empty list.
+
+    ``authorize`` checks each scope a tool lists, so a tool that lists none can be called by
+    anyone. The other checks keep a tool's inputs, outputs and writes visible to clients and
+    to the human who approves them.
+    """
+    problems = []
+    if not tool.meta.scopes_required:
+        problems.append("scopes_required is empty, so any caller could use it")
+    if getattr(tool, "input_schema", None) is None:
+        problems.append("input_schema is not declared")
+    if getattr(tool, "output_schema", None) is None:
+        problems.append("output_schema is not declared")
+    asks = tool.meta.destructive or type(tool).needs_approval is not Tool.needs_approval
+    if not tool.meta.read_only and not asks:
+        problems.append("it writes but never asks for approval (set destructive=True or override needs_approval)")
+    return problems
+
 
 class ToolRegistry:
     def __init__(self, issuer: str = "https://auth.scout.local") -> None:
         self._tools: dict[str, Tool] = {}
         self.issuer = issuer
+        # Plugins that did not load, by entry-point name, and why. The server keeps running without them.
+        self.plugin_errors: dict[str, str] = {}
 
     # ── Registration / discovery ──────────────────────────────────────────
     def register(self, tool: Tool) -> None:
         name = tool.meta.name
         if name in self._tools:
             raise ValueError(f"tool {name!r} already registered")
+        if problems := contract_problems(tool):
+            raise ValueError(f"tool {name!r} breaks the tool contract: " + "; ".join(problems))
         self._tools[name] = tool
 
     # The discovery method walks our tool packages and registers everything.
@@ -50,7 +81,7 @@ class ToolRegistry:
         from scout_mcp.auth.policy import PolicyEngine
         from scout_mcp.tools.atomic.elasticsearch import ElasticsearchSearchTool
         from scout_mcp.tools.atomic.http_client import HTTPFetchTool
-        from scout_mcp.tools.atomic.postgres import PostgresQueryTool
+        from scout_mcp.tools.atomic.postgres import PostgresDescribeTool, PostgresQueryTool
         from scout_mcp.tools.atomic.s3_storage import S3GetTool, S3PutTool
         from scout_mcp.tools.atomic.vector_search import VectorSearchTool
         from scout_mcp.tools.composed.hybrid_search import HybridSearchTool
@@ -64,7 +95,7 @@ class ToolRegistry:
 
         # Atomic (Level 1)
         for cls in (
-            PostgresQueryTool, ElasticsearchSearchTool, VectorSearchTool,
+            PostgresQueryTool, PostgresDescribeTool, ElasticsearchSearchTool, VectorSearchTool,
             S3GetTool, S3PutTool, HTTPFetchTool,
         ):
             self.register(cls(policy))
@@ -74,6 +105,23 @@ class ToolRegistry:
         # Workflow (Level 3)
         for cls in (CustomerContextTool,):
             self.register(cls(policy))
+        self._load_plugins(policy)
+
+    def _load_plugins(self, policy) -> None:
+        """Register tools other packages list under ``scout_mcp.tools``, after the built-ins.
+
+        One bad plugin must not take the server down, and it must not replace a built-in or
+        skip the contract: it is logged, recorded in ``plugin_errors`` and left out.
+        """
+        for ep in entry_points(group=PLUGIN_GROUP):
+            try:
+                cls = ep.load()
+                if not (isinstance(cls, type) and issubclass(cls, Tool)):
+                    raise TypeError("entry point is not a Tool subclass")
+                self.register(cls(policy))
+            except Exception as exc:
+                self.plugin_errors[ep.name] = f"{type(exc).__name__}: {exc}"
+                logger.error("plugin %s was not loaded: %s", ep.name, exc)
 
     # ── Lookup ────────────────────────────────────────────────────────────
     def get(self, name: str) -> Tool:
@@ -158,6 +206,7 @@ def _to_mcp_spec(tool: Tool) -> MCPToolSpec:
         name=meta.name,
         description=description,
         inputSchema=tool.input_schema.model_json_schema(),
+        outputSchema=tool.output_schema.model_json_schema() if tool.output_schema else None,
         annotations=ToolAnnotations(
             readOnlyHint=meta.read_only,
             # Only meaningful when the tool is not read-only. Anything that writes or

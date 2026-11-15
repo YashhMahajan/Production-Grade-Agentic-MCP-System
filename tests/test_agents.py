@@ -9,7 +9,7 @@ import re
 import httpx
 import pytest
 
-from scout_mcp.agents.base import LLM, AgentOutputError, AgentRun, BudgetExceeded
+from scout_mcp.agents.base import AgentOutputError, AgentRun, BudgetExceeded
 from scout_mcp.agents.mcp_client import ScoutMCPClient, ToolResult, _decode_body, wrap_untrusted
 from scout_mcp.agents.orchestrator import SupportCopilot, citation_problems
 from scout_mcp.agents.planner import PlannerAgent
@@ -17,39 +17,7 @@ from scout_mcp.agents.retriever import RetrieverAgent
 from scout_mcp.agents.synthesizer import Draft
 from scout_mcp.tools.atomic.postgres import PostgresQueryTool
 from tests.conftest import HEADERS
-
-
-class ScriptedLLM(LLM):
-    """Answers from a list, one reply per call, and records what it was asked."""
-
-    def __init__(self, replies, tokens=(100, 20)):
-        self.replies = list(replies)
-        self.calls: list[list[dict]] = []
-        self.tokens = tokens
-
-    async def complete(self, system, messages, max_tokens=1024, tools=None):
-        self.calls.append(messages)
-        return {"choices": [{"message": {"content": self.replies.pop(0)}}],
-                "usage": {"prompt_tokens": self.tokens[0], "completion_tokens": self.tokens[1]}}
-
-
-class FakeMCP:
-    def __init__(self, results=()):
-        self.results = list(results)
-        self.calls: list[tuple] = []
-
-    async def list_tools(self):
-        return [{
-            "name": "customer.build_context", "description": "Customer context.",
-            "inputSchema": {"type": "object", "required": ["customer_id", "question"],
-                            "properties": {"customer_id": {"type": "string"},
-                                           "question": {"type": "string"},
-                                           "include_orders": {"type": "boolean"}}},
-        }]
-
-    async def call_tool(self, name, arguments, deadline_ms=None):
-        self.calls.append((name, arguments, deadline_ms))
-        return self.results.pop(0)
+from tests.fakes import FakeMCP, ScriptedLLM
 
 
 PLAN = json.dumps({"needs": [{"id": "n1", "description": "recent orders", "priority": 1}],

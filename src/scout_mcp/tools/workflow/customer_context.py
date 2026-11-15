@@ -22,7 +22,7 @@ from scout_mcp.errors.framework import ToolError
 from scout_mcp.tools.atomic.elasticsearch import ElasticsearchSearchInput, ElasticsearchSearchTool
 from scout_mcp.tools.atomic.postgres import PostgresQueryInput, PostgresQueryTool
 from scout_mcp.tools.base import Tool, ToolLevel, ToolMetadata
-from scout_mcp.tools.composed.semantic_search import SemanticSearchInput, SemanticSearchTool
+from scout_mcp.tools.composed.semantic_search import SemanticResult, SemanticSearchInput, SemanticSearchTool
 
 #  An agent from accidentally injecting SQL or path traversal characters into a customer id. Tight input validation is especially important for workflow tools because they fan out to multiple downstream systems.
 
@@ -34,6 +34,44 @@ class CustomerContextInput(BaseModel):
     include_tickets: bool = True
     include_docs: bool = True
     recent_orders_limit: int = Field(5, ge=1, le=20)
+
+
+class CustomerProfile(BaseModel):
+    """Empty when no customer has that id."""
+
+    id: str | None = None
+    name: str | None = None
+    email: str | None = None
+    tier: str | None = None
+    created_at: str | None = None
+
+
+class OrderSummary(BaseModel):
+    id: str
+    status: str
+    total_cents: int
+    currency: str
+    created_at: str
+
+
+class TicketSummary(BaseModel):
+    id: str
+    subject: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    created_at: str | None = None
+
+
+class CustomerContextOutput(BaseModel):
+    customer_id: str
+    question: str
+    # Each section is present only when asked for and only when its backend answered.
+    profile: CustomerProfile | None = None
+    orders: list[OrderSummary] | None = None
+    tickets: list[TicketSummary] | None = None
+    docs: list[SemanticResult] | None = None
+    # Section name -> error code, for each backend that failed. The rest of the context is still good.
+    partial_errors: dict[str, str] | None = None
 
 
 class CustomerContextTool(Tool):
@@ -59,6 +97,7 @@ class CustomerContextTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = CustomerContextInput
+    output_schema: ClassVar[type[BaseModel] | None] = CustomerContextOutput
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)

@@ -11,6 +11,7 @@ MCP hosts can trigger their OAuth flow.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -19,6 +20,8 @@ from starlette.responses import JSONResponse
 from scout_mcp.auth.oauth import get_validator
 from scout_mcp.config import ServerSettings
 from scout_mcp.errors.framework import AuthError
+
+logger = logging.getLogger(__name__)
 
 
 # Endpoints that don't require auth — discovery and liveness are public.
@@ -43,6 +46,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         header = request.headers.get("authorization", "")
         if not header.lower().startswith("bearer "):
+            logger.info("token rejected: missing_token (%s %s)", request.method, request.url.path)
             return self._unauthenticated(request, "missing_token")
 
         bearer = header[7:].strip()
@@ -51,6 +55,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # cache is cold or expired, so validate off the event loop.
             principal = await asyncio.to_thread(self.validator.validate, bearer)
         except AuthError as exc:
+            # The reason goes to the log, not to the caller, and the token itself goes nowhere.
+            logger.info("token rejected: %s (%s)", exc.code, exc.hint)
             return self._unauthenticated(request, exc.code)
 
         # Attach to request state so downstream handlers can read identity.

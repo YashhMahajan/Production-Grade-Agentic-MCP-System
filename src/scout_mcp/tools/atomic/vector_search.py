@@ -33,6 +33,17 @@ class VectorSearchInput(BaseModel):
     filter: dict[str, Any] | None = Field(default=None, description="Qdrant filter object.")
 
 
+class VectorMatch(BaseModel):
+    id: int | str
+    doc_id: int | str
+    score: float
+    payload: dict[str, Any]
+
+
+class VectorSearchOutput(BaseModel):
+    matches: list[VectorMatch]
+
+
 class VectorSearchTool(Tool):
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="vector.search",
@@ -46,6 +57,7 @@ class VectorSearchTool(Tool):
         returns_untrusted_data=True,
     )
     input_schema: ClassVar[type[BaseModel]] = VectorSearchInput
+    output_schema: ClassVar[type[BaseModel] | None] = VectorSearchOutput
 
     def __init__(self, policy: PolicyEngine):
         super().__init__(policy)

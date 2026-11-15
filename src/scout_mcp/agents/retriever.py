@@ -36,6 +36,7 @@ _ALLOWED_TOOLS = frozenset({
     "semantic_search",
     "hybrid_search",
     "postgres.query",
+    "postgres.describe",
     "elasticsearch.search",
     "vector.search",
 })
