@@ -9,6 +9,7 @@ seconds and in CI.
         --action tool:s3:read --resource docs/a.txt
     scout-mcp new-tool weather.lookup          # a plugin package that already meets the tool contract
     scout-mcp ingest --tenant acme docs/*.md   # chunk, embed and write documents for one tenant
+    scout-mcp tenant add initech               # the Keycloak clients a new tenant needs
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from scout_mcp.ingest import (
     DEFAULT_COLLECTION, DEFAULT_INDEX, IngestError, documents_from_files, ingest_documents,
 )
 from scout_mcp.scaffold import ScaffoldError, scaffold_tool
+from scout_mcp.tenants import TenantError, add_tenant
 
 DEFAULT_POLICY = "config/policy.yaml"
 DEFAULT_CASES = "config/policy_test.yaml"
@@ -106,6 +108,40 @@ def _ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tenant_add(args: argparse.Namespace) -> int:
+    password = os.environ.get("KEYCLOAK_ADMIN_PASSWORD")
+    if not password:
+        print("error: set KEYCLOAK_ADMIN_PASSWORD in the environment (not as an argument, so it stays out "
+              "of shell history)", file=sys.stderr)
+        return 1
+    url = args.keycloak_url or os.environ.get("SCOUT_KEYCLOAK_ADMIN_URL", "http://keycloak:8080")
+    try:
+        created = asyncio.run(add_tenant(args.name, url=url, realm=args.realm,
+                                         user=os.environ.get("KEYCLOAK_ADMIN", "admin"), password=password))
+    except TenantError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Created {len(created)} clients in realm {args.realm} for tenant {args.name}. "
+          "Each secret is shown once; store them now.\n")
+    for c in created:
+        print(f"  {c.client_id:<22}{c.secret}")
+    print(f"""
+Next:
+  1. Load the tenant's data: rows in customers and orders with tenant_id = '{args.name}', then
+       scout-mcp ingest --tenant {args.name} docs/*.md
+  2. Outbound HTTP is off for this tenant until it has an allowlist. Nothing was written to
+     config/; add this to config/http_allowlist.yaml and have someone review it:
+""")
+    print(f"{args.name}:")
+    for host in args.allow_host or ["api.example.com"]:
+        print(f"  - {host}")
+    print(f"""
+  3. Check the policy before you rely on it:
+       scout-mcp policy check --subject role:support_copilot --tenant {args.name} \\
+           --action tool:postgres:read --resource orders""")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="scout-mcp", description="Scout MCP server and tools.")
     sub = parser.add_subparsers(dest="command")
@@ -140,6 +176,14 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--index", default=DEFAULT_INDEX, help="Elasticsearch index")
     ingest.add_argument("--force", action="store_true", help="re-embed documents that have not changed")
     ingest.set_defaults(run=_ingest)
+
+    tenant = sub.add_parser("tenant", help="onboard a tenant").add_subparsers(dest="tenant_command", required=True)
+    add = tenant.add_parser("add", help="create a tenant's Keycloak clients and print what to do next")
+    add.add_argument("name", help="lower case letters, digits, - and _")
+    add.add_argument("--keycloak-url", help="default: SCOUT_KEYCLOAK_ADMIN_URL, then http://keycloak:8080")
+    add.add_argument("--realm", default="scout")
+    add.add_argument("--allow-host", action="append", help="an outbound host to put in the allowlist snippet")
+    add.set_defaults(run=_tenant_add)
     return parser
 
 
