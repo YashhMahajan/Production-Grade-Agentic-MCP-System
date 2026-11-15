@@ -378,9 +378,14 @@ class ScoutServer:
         try:
             principal, tenant = self._reviewer(request)
             approval = await self.approvals.check(request.path_params["approval_id"], tenant)
-            if approval.caller == principal.subject:
+            # Whoever asked, and whoever they act for, may not also decide. Comparing only the
+            # subjects let a human approve what their own agent asked for on their behalf.
+            asked_by = {approval.caller, approval.delegator} - {None}
+            decided_by = {principal.subject, principal.delegator} - {None}
+            if asked_by & decided_by:
                 raise PolicyError("self_approval", retryable=False,
-                                  hint="the caller that asked cannot approve its own request")
+                                  hint="the identity that asked, or acts for the one that asked, "
+                                       "cannot approve its own request")
             if approval.state != "pending":
                 raise PolicyError("approval_already_decided", retryable=False,
                                   hint=f"approval is already {approval.state}")

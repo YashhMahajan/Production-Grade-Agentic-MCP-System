@@ -34,9 +34,9 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def principal(tenant="acme", scopes=(), roles=(), subject="agent:test") -> Principal:
+def principal(tenant="acme", scopes=(), roles=(), subject="agent:test", delegator="user:ana") -> Principal:
     return Principal(
-        subject=subject, delegator="user:ana", tenant=tenant, scopes=frozenset(scopes),
+        subject=subject, delegator=delegator, tenant=tenant, scopes=frozenset(scopes),
         token_id="jti-1", issued_at=0, expires_at=2**31, roles=frozenset(roles),
     )
 
@@ -50,8 +50,15 @@ TOKENS = {
     "noscope": principal(scopes=(), roles=("role:support_copilot",)),
     "writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",)),
     # Reviewers hold approval:review and are a different subject from the writer.
-    "reviewer": principal(scopes=("approval:review",), subject="user:reviewer"),
-    "reviewer_globex": principal(tenant="globex", scopes=("approval:review",), subject="user:g"),
+    # A human signed in as themselves has no delegator.
+    "reviewer": principal(scopes=("approval:review",), subject="user:reviewer", delegator=None),
+    "reviewer_globex": principal(tenant="globex", scopes=("approval:review",), subject="user:g", delegator=None),
+    # user:ana is who the "writer" agent acts for (its delegator), and may review.
+    "ana_reviewer": principal(scopes=("approval:review",), subject="user:ana", delegator=None),
+    # An agent reviewing on behalf of the human the requester is, or acts for.
+    "bot_for_ana": principal(scopes=("approval:review",), subject="agent:review-bot", delegator="user:ana"),
+    # A human writing as themselves: the identity on the request is user:ana.
+    "ana_writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",), subject="user:ana", delegator=None),
     # Same subject as "writer": used to show that nobody approves their own request.
     "self_reviewer": principal(scopes=("approval:review",)),
     "no_review_scope": principal(scopes=(), subject="user:nope"),
