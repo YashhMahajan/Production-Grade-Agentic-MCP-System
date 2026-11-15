@@ -356,6 +356,16 @@
       "optionalClientScopes": [],
       "protocolMappers": [
         {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
           "name": "scout-audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
