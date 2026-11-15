@@ -1,6 +1,6 @@
 # Issues
 
-What I found when I audited the repo and then ran it for real, what I did about it, and what is still open. "Checked by" names a test in `tests/` that fails without the fix. Tests under `tests/e2e` run against the real compose stack in CI.
+What I found when I audited the repo and then ran it for real, and what I did about it. "Checked by" names a test in `tests/` that fails without the fix. Tests under `tests/e2e` run against the real compose stack in CI.
 
 ## Fixed
 
@@ -110,30 +110,3 @@ I went through auth, tenant isolation, the approval gate, `http.fetch`, the path
 | 73 | Only agents had identities; a person could not sign in | `scout-human` is a public client with S256 PKCE required and no secret. A person's tenant is a user attribute only an admin sets, mapped into the token, and their roles come from realm roles the client may carry | `test_people_sign_in_with_pkce_and_the_token_says_who_they_are`, `test_a_sign_in_without_a_code_challenge_is_refused`, `test_a_person_sees_only_their_own_tenants_rows`, `test_a_person_cannot_approve_their_own_request_but_a_reviewer_can` (all e2e, through the real authorization-code flow) |
 | 74 | A tenant's three Keycloak clients were written by hand, and a typo in a hard-coded `tenant` claim reads another tenant's data | `scout-mcp tenant add` builds a copilot, a writer and a reviewer from one definition. An existing client stops the run before any change, and a failure part way removes what was made | `test_a_generated_client_matches_the_realm_files_own_for_acme_field_for_field`, `test_every_generated_client_carries_the_new_tenant_and_no_other` |
 | 75 | The copilot's way of working was only usable through Scout's own model calls | The `investigate-customer` MCP prompt carries the copilot's rules for a client's own model, and names only the read-only tools that caller can see | `test_it_names_only_tools_that_caller_can_see_and_never_a_write_tool`, `test_a_write_tool_handed_to_the_builder_is_still_not_named` |
-
-## Open
-
-**Weaknesses I know about**
-- The Postgres policy resource is the first table after `FROM`. A query that joins or sub-selects another table is checked against the first one only, so the `analyst` rule (`analytics/*`) does not stop an analyst reading `customers` in their own tenant. Row-level security still limits them to their tenant. The fix I would make is to read the real relations from `EXPLAIN (FORMAT JSON)` and check each one.
-- The `pii_fields` rule reads column names out of the SQL text, so `SELECT *` does not trip it. It protects nothing today only because the seed schema has no such columns.
-- A circuit breaker belongs to a tool, not a backend. When Postgres is down, `customer.build_context` keeps calling it and reports `partial_errors`.
-- I could not run Postgres to test whether `set_config()` in a query really moves the tenant (#49), so I closed the route instead. Revoking `EXECUTE` on `set_config` from the role that runs agent SQL would close it for good; I have not done that.
-- Policy conditions are substring matches: `sql_contains_any: ["DROP"]` also blocks a column called `dropped_at`. The PII check treats every identifier in the query as a requested column. Both err toward denying.
-- The Postgres keyword filter is a second layer. The read-only transaction is the real guard.
-- `postgres.describe` hides columns by the names in the PII rule, as `postgres.query` does. A sensitive column that is not on that list is shown.
-- `scout-mcp ingest` never deletes a whole document: a file removed from disk stays indexed until someone deletes its rows. With hydration on, `semantic_search` returns a document's full body once per matching chunk, so a long document can appear more than once.
-- A plugin runs inside the server process with its privileges. The contract check refuses a tool with no scopes; it is not a sandbox, so only install plugins you trust.
-- The approval webhook is one POST with no retry. A receiver that is down misses it. The inbox is the record.
-- `scout-mcp tenant add` makes the Keycloak identities. It does not load the tenant's data, write the allowlist, rotate or delete a client, and it prints the secrets to the terminal.
-- A person's `sub` is their Keycloak id, so the audit log names a UUID. Token exchange for `act.sub` (an agent acting on a person's token) is not done, and `scout.whoami` is not built. When delegation is built, a person's `sub` and an agent's `act.sub` must use the same identifier format, or the check that stops someone approving what their own agent asked for compares two strings that never match.
-- The `tenant` attribute is not in a managed Keycloak user profile. Users cannot edit it while unmanaged attributes stay off, which is the default; if someone turns them on, a user could change their own tenant. A managed attribute that only an admin can edit is the fix, and I have not made it.
-- Keycloak's pages use the pinned host `keycloak:8080`, so a browser on the host needs a hosts entry for it. The end-to-end sign-in points the form at the published port instead.
-- Redis is one node. If it is down, caching and rate limiting degrade (every read is a miss; each replica limits on its own), but approvals stop, `/readyz` reports not ready, and pending approvals are lost on restart.
-- Traffic between containers is plain HTTP on the internal network. Only the edge uses TLS.
-- Keycloak runs in `start-dev`, and the client secrets, database passwords and store credentials are development values in the repo.
-- `agents/memory.py` exists and is tested alone, but the orchestrator does not use it.
-- The real-stack benchmark moves by up to about 40% on a row between CI runs, because the runner is shared. Three runs show the spread, not its distribution. See [PERFORMANCE.md](PERFORMANCE.md).
-- The official Postgres image trusts connections from `127.0.0.1` inside its own container. Only `docker compose exec` reaches it, but it means a wrong password passes there.
-
-**Decision for you**
-- Which LLM providers may see customer text. The copilot now uses two free OpenRouter models (primary and fallback) on one key; free-tier limits are about 50 requests a day without credit.

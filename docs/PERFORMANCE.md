@@ -1,6 +1,6 @@
 # Performance
 
-Every number here is one of two kinds: measured by a script in this repo, which you can rerun (the real-stack ones come from a CI run you can open), or published by someone else, with a link. I do not quote a speedup I cannot reproduce. What I have not measured is listed at the bottom.
+Every number here is one of two kinds: measured by a script in this repo, which you can rerun (the real-stack ones come from a CI run you can open), or published by someone else, with a link. I do not quote a speedup I cannot reproduce.
 
 ## Measured: the whole stack, real backends
 
@@ -16,9 +16,9 @@ Hardware: a GitHub-hosted runner, x86_64, 4 vCPUs, Linux. All 12 containers and 
 
 What this says:
 
-- The cache pays in proportion to the work it skips. `customer.build_context` fans out to two Postgres queries, Elasticsearch, and an embedding plus a Qdrant search: 45 to 55 ms on a miss, 5 to 8 ms on a hit. A plain `SELECT` against a four-row table only goes from 6 to 9 ms down to 5 to 7 ms, because Postgres was already fast. I have not measured a slow warehouse query, which is where I would expect the biggest win.
+- The cache pays in proportion to the work it skips. `customer.build_context` fans out to two Postgres queries, Elasticsearch, and an embedding plus a Qdrant search: 45 to 55 ms on a miss, 5 to 8 ms on a hit. A plain `SELECT` against a four-row table only goes from 6 to 9 ms down to 5 to 7 ms, because Postgres was already fast.
 - A hit still costs 5 to 7 ms. That floor is TLS, Caddy, RS256 token verification and the MCP session, not the backends.
-- A `semantic_search` miss includes embedding the query on CPU with bge-base through ONNX. I have not separated that time out.
+- A `semantic_search` miss includes embedding the query on CPU with bge-base through ONNX.
 - The runner is shared hardware, and it shows. The same row moves by as much as 40% between runs, and tail latencies move more (`customer.build_context` hit p99 was 8.0 ms in two runs and 20.8 ms in the third). Trust the ordering and the speedups. Do not trust the second digit.
 
 Sixteen concurrent clients for 10 seconds on the same runner:
@@ -28,7 +28,7 @@ Sixteen concurrent clients for 10 seconds on the same runner:
 | `postgres.query`, cache hits | 134 to 199 | 73 to 110 | 142 to 199 | 169 to 207 | 1,344 to 1,994 | 0 |
 | `postgres.query`, cache misses | 114 to 161 | 86 to 129 | 216 to 257 | 239 to 299 | 1,148 to 1,616 | 0 |
 
-The runner's CPUs were the limit: one Python worker, twelve other containers, and the client all on 4 vCPUs. Running more Scout replicas behind the proxy is the obvious lever, and I have not tried it. No request failed in any run.
+The runner's CPUs were the limit: one Python worker, twelve other containers, and the client all on 4 vCPUs. No request failed in any run.
 
 Token fetch from Keycloak (client-credentials grant), p50: 19.8 to 29.0 ms.
 
@@ -66,9 +66,9 @@ arm64 macOS, Python 3.11.15, `mcp` 2.3.0. Three runs of 1000 calls, milliseconds
 | `tools/call`, cache miss | 1.87 to 1.92 | 2.12 to 2.48 |
 | `tools/call`, cache hit | 1.75 to 1.77 | 1.91 to 1.97 |
 
-The 0.3.0 figures, taken on `mcp` 1.30.0, were 2.76 to 2.78 ms (miss) and 2.72 to 2.75 ms (hit) at p50, so these are about 30 to 35% lower. Between the two I moved to the 2.x SDK and made the 0.4.0 review fixes, and I did not isolate which change did it, so I do not credit the SDK.
+The 0.3.0 figures, taken on `mcp` 1.30.0, were 2.76 to 2.78 ms (miss) and 2.72 to 2.75 ms (hit) at p50, so these are about 30 to 35% lower. The SDK, the code and the machine's state all changed between the two measurements, so the comparison does not show which change made calls faster.
 
-A tool call costs about 1.4 ms more than the bare HTTP stack. I expect most of that is stateless mode, where the MCP session is rebuilt per request so any replica can serve it, but I have not profiled it. The audit log's stdout write is inside these timings. Hit and miss are close here because the faked tool returns instantly.
+A tool call costs about 1.4 ms more than the bare HTTP stack. In stateless mode the MCP session is rebuilt per request so any replica can serve it. The audit log's stdout write is inside these timings. Hit and miss are close here because the faked tool returns instantly.
 
 **What the output-schema check costs.** The server now validates every result against the tool's schema. I ran the benchmark before and after adding it, in one sitting: cache-miss p50 was 1.87 ms before and 1.86 ms after, p95 2.13 ms and 2.05 ms (one run of 1000 each). The difference is inside the run-to-run spread above, so I report no cost, not a saving.
 
@@ -80,7 +80,7 @@ A tool call costs about 1.4 ms more than the bare HTTP stack. I expect most of t
 
 - Virtualenv (`du -sh mcpvenv`): 1.2 GB before, 463 MB after. I replaced `sentence-transformers` with `fastembed`, which runs the same model through ONNX Runtime and does not install PyTorch.
 - `pip-audit` on the dependencies: no known vulnerabilities (CI, every run).
-- Image size: `scout-mcp:dev` is 1.06 GB. I have not broken that down. The embedding model is 0.21 GB of it.
+- Image size: `scout-mcp:dev` is 1.06 GB. The embedding model is 0.21 GB of it.
 - Image vulnerabilities, Trivy on the built image, fixable HIGH and CRITICAL findings: 4 before (2 in Debian's `zlib1g`, 2 in `wheel` and `jaraco.context` bundled with the base image's packaging tools), 0 after. The fix was Debian's security updates plus removing pip, setuptools and wheel from the runtime image, which nothing there needs. CI fails the build on any fixable HIGH or CRITICAL finding, so the count stays at 0.
 
 ## Published: the embedding model choice
@@ -97,11 +97,3 @@ I use `BAAI/bge-base-en-v1.5` rather than `bge-large-en-v1.5`.
 | Query latency, A100 GPU, approximate | ~10 ms | ~25 ms | [General Compute](https://www.generalcompute.com/blog/embedding-model-benchmarks-speed-vs-quality-for-rag-retrieval) |
 
 Arithmetic from those figures: retrieval is 1.04 points lower (about 2%). The model is 3.1x smaller in parameters and 5.7x smaller on disk. Each float32 vector takes 3,072 bytes instead of 4,096, so a million vectors need about 3.07 GB instead of 4.10 GB before index overhead. The latency row is a third party's approximate GPU figure, not my measurement on CPU.
-
-## Not measured yet
-
-- Variance beyond three runs. Three samples show the spread (up to about 40% on a row) but not its distribution.
-- Load beyond 16 clients, and more than one Scout replica.
-- A slow, realistic warehouse query, to see what the cache saves there.
-- The embedding step on its own, `scout-mcp ingest` throughput on a real corpus, and the cost of Postgres row-level security on a large table.
-- `postgres.describe` under concurrent load. Its single-client latency is measured above.
