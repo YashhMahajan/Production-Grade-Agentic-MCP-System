@@ -11,7 +11,10 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import MCP_URL, compose_exec, mcp, token, value
+from scout_mcp.agents.mcp_client import ScoutMCPClient
+from tests.e2e.conftest import (
+    HUMAN_REDIRECT, KEYCLOAK, MCP_URL, claims_of, compose_exec, mcp, sign_in, token, value,
+)
 
 # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -368,3 +371,56 @@ async def test_describe_lists_the_real_schema_with_foreign_keys(acme):
     assert "keycloak" not in str(out)   # nothing from the other database's roles or tables
     only = value(await acme.call_tool("postgres.describe", {"tables": ["orders"]}))
     assert [t["name"] for t in only["tables"]] == ["orders"]
+
+
+# ── People signing in ─────────────────────────────────────────────────────
+def person(bearer: str) -> ScoutMCPClient:
+    return ScoutMCPClient(MCP_URL, bearer, verify=False)  # the tenant comes from the token alone
+
+
+def test_people_sign_in_with_pkce_and_the_token_says_who_they_are():
+    ana, rae, gus = (claims_of(sign_in(u)) for u in ("ana", "rae", "gus"))
+    assert ana["iss"] == "http://keycloak:8080/realms/scout"
+    assert "scout-mcp" in ana["aud"] and ana["exp"] - ana["iat"] == 900
+    assert ana["tenant"] == "acme" and ana["roles"] == ["role:human_agent"]
+    assert rae["tenant"] == "acme" and rae["roles"] == ["role:reviewer"]
+    assert gus["tenant"] == "globex" and gus["roles"] == ["role:human_agent"]
+    assert {"tool:postgres:read", "tool:s3:write", "approval:review"} <= set(ana["scope"].split())
+    assert "act" not in ana  # a person signed in as themselves has no delegator
+
+
+def test_a_sign_in_without_a_code_challenge_is_refused():
+    page = httpx.get(f"{KEYCLOAK}/realms/scout/protocol/openid-connect/auth", follow_redirects=False, params={
+        "client_id": "scout-human", "redirect_uri": HUMAN_REDIRECT, "response_type": "code", "state": "e2e"})
+    location = page.headers.get("location", "")
+    assert page.status_code in (302, 400) and "code=" not in location
+    if page.status_code == 302:
+        assert "error=invalid_request" in location
+
+
+async def test_a_person_sees_only_their_own_tenants_rows():
+    ids = {}
+    for user in ("ana", "gus"):
+        async with person(sign_in(user)) as client:
+            rows = value(await client.call_tool("postgres.query", {"sql": "SELECT id FROM customers ORDER BY id"}))
+            ids[user] = [r["id"] for r in rows["rows"]]
+    assert ids == {"ana": ["CUST-1001", "CUST-1002"], "gus": ["CUST-2001"]}
+
+
+async def test_a_person_cannot_approve_their_own_request_but_a_reviewer_can():
+    ana_token, rae_token = sign_in("ana"), sign_in("rae")
+    args = {"key": "attachments/e2e-person.txt", "content": "asked by a person"}
+    async with person(ana_token) as ana:
+        pending = await ana.call_tool("s3.put_object", args)
+        assert not pending.ok and pending.error_code == "pending_approval"
+        approval_id = pending.hint.split("approval_id=")[1].split(".")[0]
+
+        own = httpx.post(f"{MCP_URL}/approvals/{approval_id}/approve", verify=False,
+                         headers={"Authorization": f"Bearer {ana_token}"})
+        assert own.status_code == 403  # she holds the review scope but not the reviewer role
+        decided = httpx.post(f"{MCP_URL}/approvals/{approval_id}/approve", verify=False,
+                             headers={"Authorization": f"Bearer {rae_token}"})
+        assert decided.status_code == 200 and decided.json()["state"] == "approved"
+
+        ran = await ana.call_tool("s3.put_object", {**args, "approval_id": approval_id})
+        assert ran.ok and ran.value["bytes_written"] == len(args["content"])

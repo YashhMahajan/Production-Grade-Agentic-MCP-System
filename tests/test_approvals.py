@@ -88,6 +88,16 @@ async def test_an_unrelated_human_can_still_approve_a_humans_own_request(app_cli
     assert resp.status_code == 200 and resp.json()["state"] == "approved"
 
 
+async def test_the_review_scope_without_the_reviewer_role_is_not_enough(app_client):
+    approval_id = await pending(app_client)
+    for path, method in ((f"/approvals/{approval_id}", "get"),
+                         (f"/approvals/{approval_id}/approve", "post")):
+        resp = await getattr(app_client, method)(path, headers=auth("scope_only"))
+        assert resp.status_code == 403 and resp.json()["code"] == "missing_role"
+    detail = await app_client.get(f"/approvals/{approval_id}", headers=auth("reviewer"))
+    assert detail.json()["state"] == "pending"
+
+
 async def test_review_needs_the_scope(app_client):
     approval_id = await pending(app_client)
     for path, method in ((f"/approvals/{approval_id}", "get"),

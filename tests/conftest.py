@@ -51,17 +51,19 @@ TOKENS = {
     "writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",)),
     # Reviewers hold approval:review and are a different subject from the writer.
     # A human signed in as themselves has no delegator.
-    "reviewer": principal(scopes=("approval:review",), subject="user:reviewer", delegator=None),
-    "reviewer_globex": principal(tenant="globex", scopes=("approval:review",), subject="user:g", delegator=None),
+    "reviewer": principal(scopes=("approval:review",), subject="user:reviewer", delegator=None, roles=("role:reviewer",)),
+    "reviewer_globex": principal(tenant="globex", scopes=("approval:review",), subject="user:g", delegator=None, roles=("role:reviewer",)),
     # user:ana is who the "writer" agent acts for (its delegator), and may review.
-    "ana_reviewer": principal(scopes=("approval:review",), subject="user:ana", delegator=None),
+    "ana_reviewer": principal(scopes=("approval:review",), subject="user:ana", delegator=None, roles=("role:reviewer",)),
     # An agent reviewing on behalf of the human the requester is, or acts for.
-    "bot_for_ana": principal(scopes=("approval:review",), subject="agent:review-bot", delegator="user:ana"),
+    "bot_for_ana": principal(scopes=("approval:review",), subject="agent:review-bot", delegator="user:ana", roles=("role:reviewer",)),
     # A human writing as themselves: the identity on the request is user:ana.
     "ana_writer": principal(scopes=("tool:s3:write",), roles=("role:human_agent",), subject="user:ana", delegator=None),
     # Same subject as "writer": used to show that nobody approves their own request.
-    "self_reviewer": principal(scopes=("approval:review",)),
-    "no_review_scope": principal(scopes=(), subject="user:nope"),
+    "self_reviewer": principal(scopes=("approval:review",), roles=("role:reviewer",)),
+    "no_review_scope": principal(scopes=(), subject="user:nope", roles=("role:reviewer",)),
+    # Holds the scope but is not a reviewer: the scope alone must not be enough.
+    "scope_only": principal(scopes=("approval:review",), subject="user:scope-only", delegator=None),
     # The copilot's read scopes plus one more, for tests that ask what the server still
     # refuses when a token is given more than it should have.
     "copilot_fetch": principal(scopes=(PG, ES, VEC, "tool:http:fetch"), roles=("role:support_copilot",)),

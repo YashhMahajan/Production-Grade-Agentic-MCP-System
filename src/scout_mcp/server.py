@@ -86,8 +86,12 @@ def _deadline_ms(value: str | None) -> int | None:
     return ms if ms is not None and ms > 0 else None
 
 
-# Scope that lets a human review pending approvals.
+# What it takes to review pending approvals: the scope, and the role. The scope is something a
+# client can request; the role comes from the identity provider's record of the person, so
+# holding the scope alone (for example a public sign-in client that offers it to everyone) is
+# not enough.
 APPROVAL_REVIEW_SCOPE = "approval:review"
+APPROVAL_REVIEW_ROLE = "role:reviewer"
 
 
 @dataclass(frozen=True)
@@ -360,6 +364,9 @@ class ScoutServer:
         if APPROVAL_REVIEW_SCOPE not in principal.scopes:
             raise PolicyError("missing_scope", retryable=False,
                               hint=f"token lacks scope {APPROVAL_REVIEW_SCOPE}")
+        if APPROVAL_REVIEW_ROLE not in principal.roles:
+            raise PolicyError("missing_role", retryable=False,
+                              hint=f"token lacks role {APPROVAL_REVIEW_ROLE}")
         return principal, request.state.tenant
 
     async def approval_detail(self, request: Request) -> JSONResponse:
@@ -475,7 +482,7 @@ class ScoutServer:
             return False
 
 
-_STATUS_BY_CODE = {"approval_not_found": 404, "missing_scope": 403, "self_approval": 403,
+_STATUS_BY_CODE = {"approval_not_found": 404, "missing_scope": 403, "missing_role": 403, "self_approval": 403,
                    "approval_tenant_mismatch": 403, "approval_already_decided": 409}
 
 

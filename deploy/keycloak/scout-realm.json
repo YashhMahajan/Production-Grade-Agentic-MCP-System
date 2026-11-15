@@ -323,6 +323,172 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "scout-human",
+      "name": "scout-human",
+      "description": "People sign in here (authorization code with PKCE; no client secret exists to leak)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [
+        "http://localhost:8765/callback",
+        "http://127.0.0.1:8765/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "access.token.lifespan": "900"
+      },
+      "defaultClientScopes": [
+        "tool:postgres:read",
+        "tool:elasticsearch:read",
+        "tool:vector:read",
+        "tool:s3:read",
+        "tool:s3:write",
+        "approval:review"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "scout-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "included.custom.audience": "scout-mcp"
+          }
+        },
+        {
+          "name": "tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "user.attribute": "tenant",
+            "claim.name": "tenant",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "claim.name": "roles",
+            "multivalued": "true",
+            "usermodel.realmRoleMapping.rolePrefix": "role:",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "human_agent",
+        "description": "A support person: may read the tenant's data and ask for writes"
+      },
+      {
+        "name": "reviewer",
+        "description": "May approve or deny another identity's pending calls"
+      }
+    ]
+  },
+  "scopeMappings": [
+    {
+      "client": "scout-human",
+      "roles": [
+        "human_agent",
+        "reviewer"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "ana",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "ana@acme.test",
+      "firstName": "Ana",
+      "lastName": "Acme",
+      "attributes": {
+        "tenant": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-password-ana",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "human_agent"
+      ]
+    },
+    {
+      "username": "rae",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "rae@acme.test",
+      "firstName": "Rae",
+      "lastName": "Acme",
+      "attributes": {
+        "tenant": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-password-rae",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "reviewer"
+      ]
+    },
+    {
+      "username": "gus",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "gus@globex.test",
+      "firstName": "Gus",
+      "lastName": "Globex",
+      "attributes": {
+        "tenant": [
+          "globex"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-password-gus",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "human_agent"
+      ]
     }
   ]
 }

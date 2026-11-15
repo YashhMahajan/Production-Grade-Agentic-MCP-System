@@ -6,10 +6,16 @@ Locally: `docker compose up -d --wait`, seed, then `SCOUT_E2E=1 pytest tests/e2e
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import html
 import json
 import os
+import re
+import secrets
 import shutil
 import subprocess
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -28,6 +34,9 @@ SECRETS = {  # dev secrets from deploy/keycloak/scout-realm.json
 TENANT_OF = {"copilot-acme": "acme", "copilot-globex": "globex",
              "writer-acme": "acme", "reviewer-acme": "acme"}
 
+KEYCLOAK = os.environ.get("SCOUT_E2E_KEYCLOAK_URL", "http://localhost:8081")
+HUMAN_REDIRECT = "http://localhost:8765/callback"  # registered on the scout-human client; nothing listens
+
 pytestmark = pytest.mark.skipif(os.environ.get("SCOUT_E2E") != "1", reason="set SCOUT_E2E=1")
 
 
@@ -40,6 +49,37 @@ def pytest_collection_modifyitems(items):
 
 async def token(client_id: str) -> str:
     return await fetch_token(TOKEN_URL, client_id, SECRETS[client_id])
+
+
+def claims_of(raw_token: str) -> dict:
+    payload = raw_token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+
+def sign_in(username: str) -> str:
+    """Sign a person in as the scout-human client does: authorization code with PKCE.
+
+    Keycloak's pages carry the pinned host keycloak:8080, which only exists inside the
+    network, so the form's address is pointed at the published port. Dev password.
+    """
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    oidc = f"{KEYCLOAK}/realms/scout/protocol/openid-connect"
+    with httpx.Client(follow_redirects=False, timeout=20) as client:
+        page = client.get(f"{oidc}/auth", params={
+            "client_id": "scout-human", "redirect_uri": HUMAN_REDIRECT, "response_type": "code",
+            "code_challenge": challenge, "code_challenge_method": "S256", "state": "e2e"})
+        assert page.status_code == 200, page.text[:300]
+        action = html.unescape(re.search(r'action="([^"]+)"', page.text).group(1))
+        action = action.replace("http://keycloak:8080", KEYCLOAK)
+        done = client.post(action, data={"username": username, "password": f"dev-password-{username}"})
+        assert done.status_code == 302, done.text[:300]
+        code = parse_qs(urlparse(done.headers["location"]).query)["code"][0]
+        issued = client.post(f"{oidc}/token", data={
+            "grant_type": "authorization_code", "client_id": "scout-human", "code": code,
+            "code_verifier": verifier, "redirect_uri": HUMAN_REDIRECT})
+        assert issued.status_code == 200, issued.text[:300]
+        return issued.json()["access_token"]
 
 
 def mcp(client_id: str, bearer: str, tenant: str | None = None) -> ScoutMCPClient:
@@ -82,4 +122,4 @@ def value(result):
     return result.value
 
 
-__all__ = ["acme", "globex", "http", "compose_exec", "value", "token", "mcp", "json"]
+__all__ = ["acme", "globex", "http", "compose_exec", "value", "token", "mcp", "json", "sign_in", "claims_of", "KEYCLOAK", "HUMAN_REDIRECT"]
