@@ -7,17 +7,20 @@ seconds and in CI.
     scout-mcp policy test                      # run config/policy_test.yaml against config/policy.yaml
     scout-mcp policy check --subject role:support_copilot --tenant acme \\
         --action tool:s3:read --resource docs/a.txt
+    scout-mcp new-tool weather.lookup          # a plugin package that already meets the tool contract
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import yaml
 
 from scout_mcp.auth.policy import Decision, PolicyEngine
+from scout_mcp.scaffold import ScaffoldError, scaffold_tool
 
 DEFAULT_POLICY = "config/policy.yaml"
 DEFAULT_CASES = "config/policy_test.yaml"
@@ -63,6 +66,20 @@ def _policy_check(args: argparse.Namespace) -> int:
     return 0 if d.allowed else 1
 
 
+def _new_tool(args: argparse.Namespace) -> int:
+    try:
+        root, policy = scaffold_tool(args.name, Path(args.dir))
+    except ScaffoldError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Created {root}/\n")
+    print("Install it next to the server with `pip install -e` on that directory; the tool is")
+    print("found through the scout_mcp.tools entry point. Nothing in config/ was changed. Add")
+    print("this to config/policy.yaml and config/policy_test.yaml yourself:\n")
+    print(policy)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="scout-mcp", description="Scout MCP server and tools.")
     sub = parser.add_subparsers(dest="command")
@@ -84,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--resource", required=True, help="the table or key the tool touches")
     check.add_argument("--context", help='JSON, for example \'{"sql": "SELECT 1"}\'')
     check.set_defaults(run=_policy_check)
+
+    new_tool = sub.add_parser("new-tool", help="write a plugin package for a new tool")
+    new_tool.add_argument("name", help="lower case, such as weather or weather.lookup")
+    new_tool.add_argument("--dir", default=".", help="where to create the package directory")
+    new_tool.set_defaults(run=_new_tool)
     return parser
 
 
