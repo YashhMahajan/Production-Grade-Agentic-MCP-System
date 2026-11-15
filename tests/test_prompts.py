@@ -87,3 +87,17 @@ async def test_bad_arguments_and_unknown_prompts_are_refused(app_client, over):
 async def test_the_prompt_needs_a_token(app_client):
     resp, _ = await rpc(app_client, "prompts/get", PARAMS, token="not-a-token")
     assert resp.status_code == 401
+
+
+def test_a_write_tool_handed_to_the_builder_is_still_not_named():
+    from scout_mcp.prompts import investigate_customer
+    tools = {"customer.build_context": "context", "s3.put_object": "writes", "http.fetch": "fetches"}
+    text = investigate_customer(PARAMS["arguments"], tools).messages[0].content.text
+    assert "customer.build_context" in text and "s3.put_object" not in text and "http.fetch" not in text
+
+
+async def test_the_server_hands_over_read_only_tools_even_if_the_fixed_list_grew(app_client, monkeypatch):
+    import scout_mcp.prompts as prompts
+    monkeypatch.setattr(prompts, "_TOOL_ORDER", (*prompts._TOOL_ORDER, "s3.put_object", "http.fetch"))
+    text = text_of(await get_prompt(app_client, token="admin"))  # admin can see every tool
+    assert "s3.put_object" not in text and "http.fetch" not in text

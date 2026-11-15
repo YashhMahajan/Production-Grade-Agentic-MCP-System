@@ -27,7 +27,7 @@ import uvicorn
 from elasticsearch import AsyncElasticsearch
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, ListToolsResult, TextContent
+from mcp.types import CallToolResult, GetPromptResult, ListPromptsResult, ListToolsResult, TextContent
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from starlette.applications import Starlette
@@ -56,6 +56,7 @@ from scout_mcp.governance.tenant import TenantMiddleware
 from scout_mcp.observability.audit import AuditLogger
 from scout_mcp.observability.metrics import MetricsRegistry, metrics_endpoint_for
 from scout_mcp.observability.tracing import current_trace_id, get_tracer, init_tracing
+from scout_mcp.prompts import PROMPTS, get_prompt
 from scout_mcp.ratelimit.limiter import RateLimiter
 from scout_mcp.reliability.atba import ATBA
 from scout_mcp.reliability.circuit_breaker import CircuitBreakerRegistry, State
@@ -122,6 +123,8 @@ class ScoutServer:
             settings.service_name,
             on_list_tools=self._on_list_tools,
             on_call_tool=self._on_call_tool,
+            on_list_prompts=self._on_list_prompts,
+            on_get_prompt=self._on_get_prompt,
         )
 
         # Shared singletons used across requests.
@@ -164,6 +167,20 @@ class ScoutServer:
         return ListToolsResult(
             tools=self.registry.list_visible(tenant=caller.tenant, scopes=caller.scopes)
         )
+
+    async def _on_list_prompts(self, ctx, _params) -> ListPromptsResult:
+        self._context_from(ctx.request)  # a verified caller, like every other request
+        return ListPromptsResult(prompts=PROMPTS)
+
+    async def _on_get_prompt(self, ctx, params) -> GetPromptResult:
+        caller = self._context_from(ctx.request)
+        # The prompt may only name read-only tools this caller can see.
+        tools = {
+            spec.name: self.registry.get(spec.name).meta.description
+            for spec in self.registry.list_visible(tenant=caller.tenant, scopes=caller.scopes)
+            if self.registry.get(spec.name).meta.read_only
+        }
+        return get_prompt(params.name, params.arguments, tools)
 
     async def _on_call_tool(self, ctx, params) -> CallToolResult:
         try:
