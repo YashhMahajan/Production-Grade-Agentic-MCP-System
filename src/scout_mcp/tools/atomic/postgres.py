@@ -190,6 +190,16 @@ class PostgresDescribeInput(BaseModel):
         None, min_length=1, max_length=50, description="Only these tables. Leave out for all you may read.")
 
 
+    @field_validator("schema_name")
+    @classmethod
+    def not_a_system_schema(cls, value: str) -> str:
+        # postgres.query refuses every pg_* name and the catalog views; describing them would
+        # list the same names it was built to keep an agent away from.
+        if value.lower().startswith("pg_") or value.lower() == "information_schema":
+            raise ValueError("system schemas cannot be described")
+        return value
+
+
 class ColumnInfo(BaseModel):
     name: str
     type: str

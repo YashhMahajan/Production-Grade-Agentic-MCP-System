@@ -106,3 +106,21 @@ def test_no_arguments_still_means_start_the_server(monkeypatch):
     started = []
     monkeypatch.setattr("scout_mcp.server.main", lambda: started.append(True))
     assert main([]) == 0 and started == [True]
+
+
+def test_a_deny_rule_pinned_to_a_folder_still_matches_a_path_with_a_dotdot_segment():
+    from scout_mcp.auth.policy import Rule
+    engine = PolicyEngine([
+        Rule("allow-everything", ("role:a",), ("tool:t:read",), ("*",)),
+        Rule("deny-secret", ("*",), ("tool:t:read",), ("tenant:*/secret/*",), effect="deny"),
+    ])
+    assert engine.decide(("role:a",), "acme", "tool:t:read", "secret/x", {}).rule == "deny-secret"
+    traversal = engine.decide(("role:a",), "acme", "tool:t:read", "secret/../secret/x", {})
+    assert not traversal.allowed and traversal.rule == "deny-secret"  # a .. cannot step around a deny
+
+
+def test_an_allow_rule_pinned_to_a_folder_never_matches_a_path_with_a_dotdot_segment():
+    from scout_mcp.auth.policy import Rule
+    engine = PolicyEngine([Rule("docs-only", ("role:a",), ("tool:t:read",), ("tenant:*/docs/*",))])
+    assert engine.decide(("role:a",), "acme", "tool:t:read", "docs/a", {}).allowed
+    assert not engine.decide(("role:a",), "acme", "tool:t:read", "docs/../private/a", {}).allowed

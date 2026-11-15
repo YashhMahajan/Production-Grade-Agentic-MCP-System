@@ -109,6 +109,7 @@ async def test_the_result_is_never_cached_because_it_depends_on_who_asks():
 @pytest.mark.parametrize("bad", [
     {"tables": ["orders; DROP TABLE x"]}, {"tables": ['"orders"']}, {"schema": "public; --"},
     {"tables": ["a" * 64]}, {"tables": []}, {"tables": ["t"] * 51},
+    {"schema": "pg_catalog"}, {"schema": "PG_TEMP_1"}, {"schema": "information_schema"},
 ])
 def test_names_that_are_not_plain_identifiers_are_refused(bad):
     with pytest.raises(ValueError):
