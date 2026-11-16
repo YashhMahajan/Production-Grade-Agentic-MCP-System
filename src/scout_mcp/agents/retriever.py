@@ -52,6 +52,8 @@ class Finding:
 @dataclass
 class RetrievalResult:
     findings: list[Finding] = field(default_factory=list)
+    # Tool calls that failed, as "tool: code". Shown to the person, never citable.
+    errors: list[str] = field(default_factory=list)
     iterations_used: int = 0
     exceeded_budget: bool = False
 
@@ -87,11 +89,7 @@ class RetrieverAgent(Agent):
                 break
 
             if decision.get("done"):
-                for f in decision.get("findings", []):
-                    findings_accum.append(Finding(
-                        source=str(f.get("source", "")),
-                        summary=str(f.get("summary", "")),
-                    ))
+                # Only tool results are evidence. Whatever the model lists here is its own words.
                 break
 
             # Otherwise we expect a tool call instruction.
@@ -104,7 +102,7 @@ class RetrieverAgent(Agent):
                 messages.append({
                     "role": "user",
                     "content": "Your last response had no `tool` and no `done`. "
-                               "Emit {\"done\": true, \"findings\": [...]} if you have enough, "
+                               "Emit {\"done\": true} if you have enough, "
                                "otherwise {\"tool\": \"<name>\", \"arguments\": {...}}."
                 })
                 continue
@@ -125,11 +123,15 @@ class RetrieverAgent(Agent):
                     tool_name, arguments, deadline_ms=run.remaining_ms()
                 )
                 # Keep the raw result for synthesis; the model sees a bounded, marked view.
-                findings_accum.append(Finding(
-                    source=tool_name,
-                    summary=tool_result.as_agent_observation(max_chars=FINDING_CHARS),
-                    raw=tool_result.value,
-                ))
+                # A denial or an error is not evidence, so it cannot be cited.
+                if tool_result.ok:
+                    findings_accum.append(Finding(
+                        source=tool_name,
+                        summary=tool_result.as_agent_observation(max_chars=FINDING_CHARS),
+                        raw=tool_result.value,
+                    ))
+                else:
+                    result.errors.append(f"{tool_name}: {tool_result.error_code}")
                 observation = tool_result.as_agent_observation(max_chars=OBSERVATION_CHARS)
 
             messages.append({"role": "assistant", "content": json.dumps(decision)})
@@ -170,7 +172,7 @@ class RetrieverAgent(Agent):
             "Respond with EITHER "
             "{\"tool\": \"<name>\", \"arguments\": {...}} "
             "to call a tool, OR "
-            "{\"done\": true, \"findings\": [{\"source\": \"<tool>\", \"summary\": \"...\"}]} "
+            "{\"done\": true} "
             "when you have enough information."
         )
         return "\n".join(lines)

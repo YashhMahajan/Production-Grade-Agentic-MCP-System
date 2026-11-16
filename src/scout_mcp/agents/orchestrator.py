@@ -49,7 +49,8 @@ class CopilotResponse:
     tokens_in: int
     tokens_out: int
     tool_calls: int
-    # Why the run stopped early ("token_budget", "time_budget"), or None for a full run.
+    llm_calls: int = 0
+    # Why the run stopped early ("token_budget", "time_budget", "call_budget"), or None for a full run.
     degraded: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +62,7 @@ class CopilotResponse:
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "tool_calls": self.tool_calls,
+            "llm_calls": self.llm_calls,
             "degraded": self.degraded,
             "plan": {
                 "customer_id": self.plan.customer_id,
@@ -104,8 +106,10 @@ class SupportCopilot:
         max_retriever_iterations: int = 6,
         token_budget: int | None = None,
         timeout_s: float | None = None,
+        max_llm_calls: int | None = None,
     ):
-        # One run may spend this many tokens and this many seconds, across all four agents.
+        # One run may spend this many tokens, seconds and model calls, across all four agents.
+        self.max_llm_calls = max_llm_calls or int(os.environ.get("SCOUT_AGENT_MAX_LLM_CALLS", "6"))
         self.token_budget = token_budget or int(os.environ.get("SCOUT_AGENT_TOKEN_BUDGET", "60000"))
         self.timeout_s = timeout_s or float(os.environ.get("SCOUT_AGENT_TIMEOUT_S", "90"))
         self.llm = llm or LLM()
@@ -116,7 +120,8 @@ class SupportCopilot:
         self.critic = CriticAgent(self.llm)
 
     async def answer(self, question: str) -> CopilotResponse:
-        run = AgentRun(max_tokens=self.token_budget, timeout_s=self.timeout_s)
+        run = AgentRun(max_tokens=self.token_budget, timeout_s=self.timeout_s,
+                       max_llm_calls=self.max_llm_calls)
         progress: dict[str, Any] = {}
         try:
             return await self._answer(run, question, progress)
@@ -183,6 +188,7 @@ class SupportCopilot:
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
             tool_calls=run.tool_calls,
+            llm_calls=run.llm_calls,
         )
 
     async def _review(self, run, question, retrieval, draft) -> Verdict:
@@ -209,7 +215,8 @@ class SupportCopilot:
         """The run hit its budget. Say so, and return what it had by then."""
         retrieval = progress.get("retrieval") or RetrievalResult()
         found = len(retrieval.findings)
-        words = {"token_budget": "token budget", "time_budget": "time limit"}.get(reason, reason)
+        words = {"token_budget": "token budget", "time_budget": "time limit",
+                                       "call_budget": "call limit"}.get(reason, reason)
         return CopilotResponse(
             draft=(f"I ran out of my {words} before I could write a reliable answer "
                    f"({found} finding{'s' if found != 1 else ''} gathered). "
@@ -223,6 +230,7 @@ class SupportCopilot:
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
             tool_calls=run.tool_calls,
+            llm_calls=run.llm_calls,
             degraded=reason,
         )
 
@@ -252,13 +260,14 @@ class SupportCopilot:
     def _short_circuit(run: AgentRun, plan: Plan, message: str) -> CopilotResponse:
         return CopilotResponse(
             draft=message,
-            approved=True,
+            approved=False,
             citations=[],
             plan=plan,
             retrieval=RetrievalResult(),
-            critic=Verdict(approved=True, issues=[], revision_hints=None),
+            critic=Verdict(approved=False, issues=["no answer was attempted"], revision_hints=None),
             run_id=run.run_id,
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
             tool_calls=run.tool_calls,
+            llm_calls=run.llm_calls,
         )
