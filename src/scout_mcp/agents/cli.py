@@ -3,12 +3,15 @@
 Run with::
 
     scout-copilot brief CUST-1234
+    scout-copilot draft CUST-1234 "Why was my refund delayed?"
     scout-copilot ask "Why was the refund on order o_9021 for CUST-1234 delayed?"
     scout-copilot "Why was the refund ..."          # a bare question means ask
 
-``brief`` makes no model call and needs no LLM key. ``ask`` needs SCOUT_LLM_API_KEY.
-When the model cannot be used (no key, the day's allowance spent, an error, a run that
-hit its call limit) ``ask`` prints the customer brief instead and exits 3.
+``brief`` makes no model call and needs no LLM key. ``draft`` writes a reply whose every
+claim cites evidence and is checked in code; it needs SCOUT_LLM_API_KEY and the ``copilot``
+extra (``pip install ".[copilot]"``). ``ask`` needs SCOUT_LLM_API_KEY. When the model cannot
+be used (no key, the day's allowance spent, an error, a run that hit its call limit) ``ask``
+and ``draft`` print the customer brief instead and exit 3.
 
 Both need SCOUT_MCP_URL and SCOUT_TENANT, plus either SCOUT_MCP_TOKEN or
 SCOUT_TOKEN_URL with SCOUT_CLIENT_ID and SCOUT_CLIENT_SECRET (the Keycloak client in
@@ -88,6 +91,48 @@ async def ask_command(copilot: SupportCopilot, mcp, question: str, ledger: Ledge
     return text, EXIT_OK if response.approved else EXIT_NOT_OK
 
 
+async def draft_command(mcp, customer_id: str, question: str, ledger: Ledger, now: datetime,
+                        models: list | None = None) -> tuple[str, int]:
+    """A cited, checked draft reply. Falls back to the brief when the model cannot be used."""
+    from scout_mcp.agents.llm import FinalLLMError
+
+    def pack(why: str, context: dict | None) -> tuple[str, int]:
+        body = make_brief(context, now).text if context else "No customer data was loaded."
+        return f"{why} Here is the evidence instead.\n\n{body}", EXIT_EVIDENCE
+
+    async def brief_pack(why: str) -> tuple[str, int]:
+        text, code = await brief_command(mcp, customer_id, now)
+        return (f"{why} Here is the evidence instead.\n\n{text}", EXIT_EVIDENCE) if code == EXIT_OK else (text, code)
+
+    allowed = ledger.remaining()
+    if allowed < 1:
+        return await brief_pack("Today's model allowance is spent.")
+    if models is None:
+        try:
+            from scout_mcp.agents.llm import build_models
+            models = build_models()
+        except ImportError:
+            return 'draft needs the copilot extra: pip install ".[copilot]"', EXIT_USAGE
+        except FinalLLMError as exc:
+            return await brief_pack(f"The model could not be used ({exc}).")
+    from scout_mcp.agents.graphs.draft import run_draft
+
+    cap = min(int(os.environ.get("SCOUT_DRAFT_MAX_LLM_CALLS", "3")), allowed)
+    result = await run_draft(mcp, models, customer_id, question, now, max_llm_calls=cap,
+                             timeout_s=float(os.environ.get("SCOUT_AGENT_TIMEOUT_S", "90")))
+    ledger.record(result.llm_calls)
+
+    if result.outcome == "error":
+        return result.reason or "lookup failed", EXIT_NOT_OK
+    if result.outcome == "evidence_pack":
+        return pack(f"No draft was written ({result.reason}).", result.context)
+    flag = "approved" if result.outcome == "approved" else "flagged: " + "; ".join(result.problems)
+    evidence = "\n".join(f"[S{e.id}] {e.text}" for e in result.evidence)
+    text = "\n".join([f"DRAFT REPLY ({flag})", "=" * 72, result.text, "", "EVIDENCE", "=" * 72, evidence, "",
+                      f"model calls: {result.llm_calls}"])
+    return text, EXIT_OK if result.outcome == "approved" else EXIT_NOT_OK
+
+
 async def _main(command: str, argument: str) -> int:
     url = os.environ.get("SCOUT_MCP_URL", "http://localhost:8080")
     tenant = os.environ.get("SCOUT_TENANT", "default")
@@ -96,7 +141,12 @@ async def _main(command: str, argument: str) -> int:
     llm = None
     if command == "ask":
         llm = RedactingLLM(LLM())
-        problem = free_model_problem(llm.models)
+        names = llm.models
+    elif command == "draft":
+        from scout_mcp.agents.llm import model_names
+        names = model_names()
+    if command in ("ask", "draft"):
+        problem = free_model_problem(names)
         if problem:
             print(f"error: {problem}", file=sys.stderr)
             return EXIT_USAGE
@@ -115,6 +165,9 @@ async def _main(command: str, argument: str) -> int:
     async with ScoutMCPClient(url, token, tenant=tenant, verify=verify) as mcp:
         if command == "brief":
             text, code = await brief_command(mcp, argument, now)
+        elif command == "draft":
+            customer_id, _, question = argument.partition(" ")
+            text, code = await draft_command(mcp, customer_id.upper(), question.strip(), Ledger(), now)
         else:
             text, code = await ask_command(SupportCopilot(mcp, llm=llm), mcp, argument, Ledger(), now)
     print(text)
@@ -123,12 +176,14 @@ async def _main(command: str, argument: str) -> int:
 
 def main() -> None:
     args = sys.argv[1:]
-    if args and args[0] in ("brief", "ask"):
+    if args and args[0] in ("brief", "ask", "draft"):
         command, rest = args[0], args[1:]
     else:
         command, rest = "ask", args
-    if not rest or (command == "brief" and len(rest) != 1):
-        print("usage: scout-copilot brief CUST-1234 | scout-copilot [ask] \"<question>\"", file=sys.stderr)
+    bad_draft = command == "draft" and (len(rest) < 2 or not PlannerAgent._extract_customer_id(rest[0]))
+    if not rest or bad_draft or (command == "brief" and len(rest) != 1):
+        print("usage: scout-copilot brief CUST-1234 | draft CUST-1234 \"<question>\" | [ask] \"<question>\"",
+              file=sys.stderr)
         sys.exit(EXIT_USAGE)
     sys.exit(asyncio.run(_main(command, " ".join(rest))))
 

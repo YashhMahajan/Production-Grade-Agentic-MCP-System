@@ -89,6 +89,9 @@ Load policy.yaml at startup and fail if it is missing
 | Customer id | must look like `CUST-1001`, else the copilot asks for one | `agents/planner.py` |
 | Writes | none; the allow-list has no write tool, and the server also enforces policy | both |
 | LLM models | primary `SCOUT_LLM_MODEL`, then `SCOUT_LLM_FALLBACK_MODEL` on an error or empty reply, but not on a 400-403 or a 429 that names a per-day cap; both free on OpenRouter, same key. With `SCOUT_ENV=production` a `:free` model is refused unless `SCOUT_ALLOW_FREE_LLM=1` | `agents/base.py`, `agents/cli.py` |
+| Draft calls per run | 3 (`SCOUT_DRAFT_MAX_LLM_CALLS`) counting the repair, the revision and each fallback attempt; no attempt starts past it | `agents/graphs/draft.py`, `agents/llm.py` |
+| Draft checks | every claim cites existing evidence; numbers, dates, amounts and contact details appear in the cited evidence; no commitment phrase; at most 180 words; one revision, then the draft is flagged | `agents/claims.py` |
+| Draft tools | one fixed `customer.build_context` call; the model chooses no tool, so a poisoned ticket cannot cause a call | `agents/graphs/draft.py` |
 | `brief` | no model call and no LLM key; fixed-rule flags only | `agents/brief.py` |
 
 The server's policy applies to the copilot like any client. The client-side allow-list is a second layer, not the only one.

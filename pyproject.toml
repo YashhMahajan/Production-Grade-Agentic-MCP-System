@@ -50,6 +50,13 @@ dev = [
   "httpx>=0.27",
 ]
 
+# The copilot's graph and chat models. The server does not import them, and its image does not install them.
+copilot = [
+  "langgraph>=1.2.22,<1.3",
+  "langchain-core>=1.8.1,<2",
+  "langchain-openai>=1.8,<2",
+]
+
 [project.scripts]
 scout-mcp = "scout_mcp.cli:main"
 scout-copilot = "scout_mcp.agents.cli:main"

@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,copilot]"
       - run: ruff check src tests deploy scripts
       - run: pytest -q
       - name: Policy cases pass and every rule decides one
@@ -174,7 +174,7 @@ jobs:
           # setuptools 79 on the runner has three known advisories; it is a build tool,
           # not one of our dependencies, but audit a clean environment.
           pip install -U pip setuptools
-          pip install -e . pip-audit
+          pip install -e ".[copilot]" pip-audit
           pip-audit --skip-editable
       # Trivy runs from its own pinned image. The setup action pinned a Trivy release
       # that had since been removed, and one fewer third-party action is one fewer thing to trust.
@@ -203,3 +203,17 @@ jobs:
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
             image --severity HIGH,CRITICAL --ignore-unfixed --format table scout-mcp:scan | tee trivy-image.txt | tail -40 || true
+      # The copilot image adds the agent framework. Scan it on its own, so its findings are not
+      # hidden by, and do not leak into, the server image's.
+      - name: Build the copilot image
+        run: docker build --build-arg 'EXTRAS=[copilot]' -t scout-mcp-copilot:scan .
+      - name: Copilot image vulnerabilities (fail on any HIGH or CRITICAL that has a fix)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
+            image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 scout-mcp-copilot:scan
+      - name: The server image does not contain the agent framework
+        run: |
+          if docker run --rm --entrypoint python scout-mcp:scan -c "import langgraph" 2>/dev/null; then
+            echo "langgraph is in the server image"; exit 1
+          fi
+          docker run --rm --entrypoint python scout-mcp-copilot:scan -c "import langgraph, langchain_openai"
