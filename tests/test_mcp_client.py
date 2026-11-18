@@ -92,3 +92,4 @@ async def test_a_deadline_from_the_caller_cuts_a_slow_tool_short(app_client, mon
     resp = await app_client.post("/mcp", json=body, headers=headers)
     took = asyncio.get_event_loop().time() - started
     text = json.loads(_decode_body(resp)["result"]["content"][0]["text"])
+    assert text["code"] == "timeout" and took < 1.0
