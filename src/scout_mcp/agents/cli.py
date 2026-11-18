@@ -3,11 +3,14 @@
 Run with::
 
     scout-copilot brief CUST-1234
+    scout-copilot activity CUST-1234 [7d | 2026-11-10]
     scout-copilot draft CUST-1234 "Why was my refund delayed?"
     scout-copilot ask "Why was the refund on order o_9021 for CUST-1234 delayed?"
     scout-copilot "Why was the refund ..."          # a bare question means ask
 
-``brief`` makes no model call and needs no LLM key. ``draft`` writes a reply whose every
+``brief`` and ``activity`` make no model call and need no LLM key; ``activity`` lists the
+orders and tickets created since a date (default: the last 7 days). Tickets are flagged
+against ``config/sla.yaml`` (set SCOUT_SLA_FILE to read it from elsewhere). ``draft`` writes a reply whose every
 claim cites evidence and is checked in code; it needs SCOUT_LLM_API_KEY and the ``copilot``
 extra (``pip install ".[copilot]"``). ``ask`` needs SCOUT_LLM_API_KEY. When the model cannot
 be used (no key, the day's allowance spent, an error, a run that hit its call limit) ``ask``
@@ -28,17 +31,18 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from scout_mcp.agents.base import LLM
-from scout_mcp.agents.brief import make_brief
+from scout_mcp.agents.brief import make_activity, make_brief
 from scout_mcp.agents.ledger import Ledger
 from scout_mcp.agents.mcp_client import ScoutMCPClient, fetch_token
 from scout_mcp.agents.orchestrator import SupportCopilot
 from scout_mcp.agents.planner import PlannerAgent
 from scout_mcp.agents.redact import RedactingLLM
+from scout_mcp.agents.sla import Sla, SlaError, TenantSla
 
 EXIT_OK, EXIT_NOT_OK, EXIT_USAGE, EXIT_EVIDENCE = 0, 1, 2, 3
 
@@ -54,23 +58,40 @@ def free_model_problem(models: list[str]) -> str | None:
     return None
 
 
-async def brief_command(mcp, customer_id: str, now: datetime) -> tuple[str, int]:
+def parse_since(text: str, now: datetime) -> datetime:
+    """``7d`` is seven days before ``now``; anything else is an ISO 8601 date or time."""
+    if text.endswith("d") and text[:-1].isdigit():
+        return now - timedelta(days=int(text[:-1]))
+    since = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+
+
+async def activity_command(mcp, customer_id: str, since: datetime) -> tuple[str, int]:
+    """New orders and tickets since a time, from one tool call. No model."""
+    result = await mcp.call_tool("customer.activity_since",
+                                 {"customer_id": customer_id, "since": since.isoformat()})
+    if not result.ok:
+        return f"could not load activity for {customer_id}: {result.error_code}", EXIT_NOT_OK
+    return make_activity(result.value), EXIT_OK
+
+
+async def brief_command(mcp, customer_id: str, now: datetime, sla: TenantSla | None = None) -> tuple[str, int]:
     """The customer brief from one tool call. No model."""
     result = await mcp.call_tool(
         "customer.build_context", {"customer_id": customer_id, "question": "brief"})
     if not result.ok:
         return f"could not load {customer_id}: {result.error_code}", EXIT_NOT_OK
-    return make_brief(result.value, now).text, EXIT_OK
+    return make_brief(result.value, now, sla).text, EXIT_OK
 
 
 async def ask_command(copilot: SupportCopilot, mcp, question: str, ledger: Ledger,
-                      now: datetime) -> tuple[str, int]:
+                      now: datetime, sla: TenantSla | None = None) -> tuple[str, int]:
     customer_id = PlannerAgent._extract_customer_id(question)
 
     async def evidence_pack(why: str) -> tuple[str, int]:
         if not customer_id:
             return f"{why}\nInclude a customer id (e.g. CUST-1234) to get a brief.", EXIT_EVIDENCE
-        text, code = await brief_command(mcp, customer_id, now)
+        text, code = await brief_command(mcp, customer_id, now, sla)
         return f"{why} Here is the evidence instead.\n\n{text}", EXIT_EVIDENCE if code == EXIT_OK else code
 
     allowed = ledger.remaining()
@@ -92,16 +113,16 @@ async def ask_command(copilot: SupportCopilot, mcp, question: str, ledger: Ledge
 
 
 async def draft_command(mcp, customer_id: str, question: str, ledger: Ledger, now: datetime,
-                        models: list | None = None) -> tuple[str, int]:
+                        models: list | None = None, sla: TenantSla | None = None) -> tuple[str, int]:
     """A cited, checked draft reply. Falls back to the brief when the model cannot be used."""
     from scout_mcp.agents.llm import FinalLLMError
 
     def pack(why: str, context: dict | None) -> tuple[str, int]:
-        body = make_brief(context, now).text if context else "No customer data was loaded."
+        body = make_brief(context, now, sla).text if context else "No customer data was loaded."
         return f"{why} Here is the evidence instead.\n\n{body}", EXIT_EVIDENCE
 
     async def brief_pack(why: str) -> tuple[str, int]:
-        text, code = await brief_command(mcp, customer_id, now)
+        text, code = await brief_command(mcp, customer_id, now, sla)
         return (f"{why} Here is the evidence instead.\n\n{text}", EXIT_EVIDENCE) if code == EXIT_OK else (text, code)
 
     allowed = ledger.remaining()
@@ -119,7 +140,7 @@ async def draft_command(mcp, customer_id: str, question: str, ledger: Ledger, no
 
     cap = min(int(os.environ.get("SCOUT_DRAFT_MAX_LLM_CALLS", "3")), allowed)
     result = await run_draft(mcp, models, customer_id, question, now, max_llm_calls=cap,
-                             timeout_s=float(os.environ.get("SCOUT_AGENT_TIMEOUT_S", "90")))
+                             timeout_s=float(os.environ.get("SCOUT_AGENT_TIMEOUT_S", "90")), sla=sla)
     ledger.record(result.llm_calls)
 
     if result.outcome == "error":
@@ -162,28 +183,42 @@ async def _main(command: str, argument: str) -> int:
         token = await fetch_token(token_url, client_id, client_secret, verify=verify)
 
     now = datetime.now(timezone.utc)
+    try:
+        sla = Sla.load().for_tenant(tenant)
+    except FileNotFoundError:
+        print("note: no SLA file found (config/sla.yaml or SCOUT_SLA_FILE); tickets will not be flagged",
+              file=sys.stderr)
+        sla = None
+    except SlaError as exc:
+        print(f"error: SLA file: {exc}", file=sys.stderr)
+        return EXIT_USAGE
     async with ScoutMCPClient(url, token, tenant=tenant, verify=verify) as mcp:
         if command == "brief":
-            text, code = await brief_command(mcp, argument, now)
+            text, code = await brief_command(mcp, argument, now, sla)
+        elif command == "activity":
+            customer_id, _, since = argument.partition(" ")
+            text, code = await activity_command(mcp, customer_id.upper(), parse_since(since or "7d", now))
         elif command == "draft":
             customer_id, _, question = argument.partition(" ")
-            text, code = await draft_command(mcp, customer_id.upper(), question.strip(), Ledger(), now)
+            text, code = await draft_command(mcp, customer_id.upper(), question.strip(), Ledger(), now, sla=sla)
         else:
-            text, code = await ask_command(SupportCopilot(mcp, llm=llm), mcp, argument, Ledger(), now)
+            text, code = await ask_command(SupportCopilot(mcp, llm=llm), mcp, argument, Ledger(), now, sla)
     print(text)
     return code
 
 
 def main() -> None:
     args = sys.argv[1:]
-    if args and args[0] in ("brief", "ask", "draft"):
+    if args and args[0] in ("brief", "ask", "draft", "activity"):
         command, rest = args[0], args[1:]
     else:
         command, rest = "ask", args
-    bad_draft = command == "draft" and (len(rest) < 2 or not PlannerAgent._extract_customer_id(rest[0]))
-    if not rest or bad_draft or (command == "brief" and len(rest) != 1):
-        print("usage: scout-copilot brief CUST-1234 | draft CUST-1234 \"<question>\" | [ask] \"<question>\"",
-              file=sys.stderr)
+    needs_id = command in ("draft", "activity") and not (rest and PlannerAgent._extract_customer_id(rest[0]))
+    wrong_count = (command == "brief" and len(rest) != 1) or (command == "draft" and len(rest) < 2) \
+        or (command == "activity" and len(rest) > 2)
+    if not rest or needs_id or wrong_count:
+        print("usage: scout-copilot brief CUST-1234 | activity CUST-1234 [7d|DATE] | "
+              "draft CUST-1234 \"<question>\" | [ask] \"<question>\"", file=sys.stderr)
         sys.exit(EXIT_USAGE)
     sys.exit(asyncio.run(_main(command, " ".join(rest))))
 

@@ -55,9 +55,9 @@ python scripts/bench_stack.py 200 10
 
 | Job | What it proves |
 |-----|----------------|
-| `test` | Lint, 387 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
+| `test` | Lint, 423 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
 | `validate-deploy` | Compose resolves, Prometheus rules parse and pass their unit tests, Caddyfile validates, realm and dashboard are valid JSON, Dockerfile lint |
-| `stack` | Image builds, every service gets healthy, demo data loads, a sample file is ingested for acme (and ingesting it again embeds nothing), 42 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
+| `stack` | Image builds, every service gets healthy, demo data loads, a sample file is ingested for acme (and ingesting it again embeds nothing), 43 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
 | `secrets` | `gitleaks` over the commits a pull request adds, with the development-only files in `.gitleaks.toml` allowed; fails on a credential |
 | `security` | `pip-audit` on dependencies, Trivy on the Dockerfile, and Trivy on the built image, which fails on any fixable HIGH or CRITICAL finding |
 
@@ -93,6 +93,8 @@ Load policy.yaml at startup and fail if it is missing
 | Draft calls per run | 3 (`SCOUT_DRAFT_MAX_LLM_CALLS`) counting the repair, the revision and each fallback attempt; no attempt starts past it | `agents/graphs/draft.py`, `agents/llm.py` |
 | Draft checks | every claim cites existing evidence; numbers, dates, amounts and contact details appear in the cited evidence; no commitment phrase; at most 180 words; one revision, then the draft is flagged | `agents/claims.py` |
 | Draft tools | one fixed `customer.build_context` call; the model chooses no tool, so a poisoned ticket cannot cause a call | `agents/graphs/draft.py` |
+| SLA flags | targets from `config/sla.yaml` (`SCOUT_SLA_FILE`): nearing at 75% of the target, past beyond it; open and pending tickets only; no target means no flag | `agents/sla.py` |
+| `activity` | one `customer.activity_since` call and no model; creation times only | `agents/cli.py` |
 | `brief` | no model call and no LLM key; fixed-rule flags only | `agents/brief.py` |
 
 The server's policy applies to the copilot like any client. The client-side allow-list is a second layer, not the only one.

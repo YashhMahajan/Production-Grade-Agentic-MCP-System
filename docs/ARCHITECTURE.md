@@ -68,6 +68,7 @@ Reviewing takes the `approval:review` scope **and** `role:reviewer`. The scope i
 | Composed | `semantic_search` | vector + postgres read | 120 s |
 | Composed | `hybrid_search` | vector + elasticsearch read | 120 s |
 | Workflow | `customer.build_context` | postgres + elasticsearch + vector read | 30 s |
+| Workflow | `customer.activity_since` | postgres + elasticsearch read | 30 s |
 
 `http.fetch` checks the host against a per-tenant allowlist and refuses names that resolve to loopback, link-local (cloud metadata) or unspecified addresses.
 
@@ -99,6 +100,10 @@ Planner, Retriever, Synthesizer, Critic, run by `SupportCopilot` in `agents/orch
 
 
 ### The draft path (LangGraph)
+
+`scout-copilot activity CUST-1001 [7d | DATE]` lists the orders and tickets created since a date, from one call to `customer.activity_since`, with no model. Only creation times are stored, so it shows what is new, not what changed on an existing order or ticket. I did not give the tool a name that promised more.
+
+Ticket age is judged against `config/sla.yaml`: hours an open or pending ticket may wait, by priority, with the most specific entry winning (the tenant's tier, the tenant's default, the tier, then `default`). A ticket is reported as nearing its target at 75% of it and as past it beyond 100%. The brief shows the flag, and the draft's evidence carries the same text, so a claim that a ticket is past its SLA can be checked against evidence like any other claim. A priority with no target is never flagged, and a missing file turns flags off with a note instead of guessing a target.
 
 `scout-copilot draft CUST-1001 "question"` runs a LangGraph state graph in `agents/graphs/draft.py`: load the customer's context with one fixed `customer.build_context` call, number the facts as `[S1]`, `[S2]`, ask the model for claims that each cite those numbers, check every claim in code, revise once if a check fails, and otherwise stop. Anything that goes wrong (no key, no budget, a model error, an unreadable reply twice) ends in the evidence pack and exit code 3.
 

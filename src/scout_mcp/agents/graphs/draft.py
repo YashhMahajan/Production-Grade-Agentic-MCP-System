@@ -30,6 +30,7 @@ from scout_mcp.agents.llm import CallBudget, FinalLLMError, LLMUnavailable, invo
 from scout_mcp.agents.mcp_client import wrap_untrusted
 from scout_mcp.agents.prompts import DRAFT_SYSTEM
 from scout_mcp.agents.redact import Redactor
+from scout_mcp.agents.sla import TenantSla
 
 RECURSION_LIMIT = 12  # a backstop: the longest real path is eight steps
 
@@ -51,6 +52,7 @@ class DraftRun:
     now: datetime
     max_llm_calls: int = 3
     timeout_s: float | None = None
+    sla: TenantSla | None = None
     started: float = field(default_factory=time.monotonic)
     counter: list[int] = field(default_factory=lambda: [0])
     tool_calls: int = 0
@@ -93,7 +95,7 @@ def build_draft_graph(run: DraftRun):
         if not result.ok:
             return {"outcome": "error", "reason": f"lookup failed: {result.error_code}"}
         run.context = result.value
-        run.evidence = build_evidence(result.value, run.now)
+        run.evidence = build_evidence(result.value, run.now, run.sla)
         if not run.evidence:
             return {"outcome": "evidence_pack", "reason": "no evidence found"}
         return {}
@@ -164,8 +166,9 @@ def build_draft_graph(run: DraftRun):
 
 
 async def run_draft(mcp, models: list, customer_id: str, question: str, now: datetime,
-                    max_llm_calls: int = 3, timeout_s: float | None = None) -> DraftResult:
-    run = DraftRun(mcp=mcp, models=models, now=now, max_llm_calls=max_llm_calls, timeout_s=timeout_s)
+                    max_llm_calls: int = 3, timeout_s: float | None = None,
+                    sla: TenantSla | None = None) -> DraftResult:
+    run = DraftRun(mcp=mcp, models=models, now=now, max_llm_calls=max_llm_calls, timeout_s=timeout_s, sla=sla)
     state = await build_draft_graph(run).ainvoke(
         {"customer_id": customer_id, "question": question, "llm_calls": 0, "revisions": 0},
         config={"recursion_limit": RECURSION_LIMIT})

@@ -86,6 +86,7 @@ class ToolRegistry:
         from scout_mcp.tools.atomic.vector_search import VectorSearchTool
         from scout_mcp.tools.composed.hybrid_search import HybridSearchTool
         from scout_mcp.tools.composed.semantic_search import SemanticSearchTool
+        from scout_mcp.tools.workflow.customer_activity import CustomerActivityTool
         from scout_mcp.tools.workflow.customer_context import CustomerContextTool
 
         if policy is None:
@@ -103,7 +104,7 @@ class ToolRegistry:
         for cls in (SemanticSearchTool, HybridSearchTool):
             self.register(cls(policy))
         # Workflow (Level 3)
-        for cls in (CustomerContextTool,):
+        for cls in (CustomerContextTool, CustomerActivityTool):
             self.register(cls(policy))
         self._load_plugins(policy)
 

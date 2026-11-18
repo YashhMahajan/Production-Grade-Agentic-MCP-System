@@ -37,7 +37,7 @@ async def test_probes_and_discovery_need_no_token(app_client):
     assert (await app_client.get("/readyz")).json() == {"status": "ready"}
     doc = (await app_client.get("/.well-known/mcp-server")).json()
     assert doc["authorization_server"]["issuer"] == "https://auth.scout.local"
-    assert len(doc["tools_summary"]) == 10
+    assert len(doc["tools_summary"]) == 11
 
 
 async def test_mcp_requires_a_valid_token(app_client):
