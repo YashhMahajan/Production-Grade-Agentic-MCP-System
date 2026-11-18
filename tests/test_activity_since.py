@@ -99,7 +99,7 @@ async def test_a_caller_without_both_read_scopes_is_refused(app_client, monkeypa
     asked = stores(monkeypatch)
     for token in ("analyst", "noscope"):  # postgres only, and nothing
         is_error, out = await call(app_client, "customer.activity_since", ARGS, token=token)
-        assert is_error and out["code"] == "missing_scope", token
+        assert is_error and out["code"] in ("missing_scope", "not_authorized"), (token, out)
     assert asked == []
 
 

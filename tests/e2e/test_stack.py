@@ -63,7 +63,7 @@ def test_edge_forwards_only_public_paths_and_sets_security_headers(http):
         assert http.get(f"{MCP_URL}{path}").status_code == 404, path
     doc = http.get(f"{MCP_URL}/.well-known/mcp-server").json()
     assert doc["authorization_server"]["issuer"] == "http://keycloak:8080/realms/scout"
-    assert len(doc["tools_summary"]) == 10
+    assert len(doc["tools_summary"]) == 11
 
 
 def test_a_browser_origin_is_refused_at_the_edge(http):
