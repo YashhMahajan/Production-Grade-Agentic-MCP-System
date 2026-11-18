@@ -67,6 +67,8 @@ TOKENS = {
     # The copilot's read scopes plus one more, for tests that ask what the server still
     # refuses when a token is given more than it should have.
     "copilot_fetch": principal(scopes=(PG, ES, VEC, "tool:http:fetch"), roles=("role:support_copilot",)),
+    # The copilot's read scopes plus the one that lets it propose an escalation (a human must still approve it).
+    "copilot_escalate": principal(scopes=(PG, ES, VEC, "tool:tickets:escalate"), roles=("role:support_copilot",)),
     "copilot_write": principal(scopes=(PG, ES, VEC, "tool:s3:write"), roles=("role:human_agent",)),
 }
 

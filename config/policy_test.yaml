@@ -44,6 +44,39 @@ cases:
     expect: deny
     rule: no-one-can-drop-tables
 
+  # ── Escalating a ticket ──────────────────────────────────────────────────
+  - name: copilot may propose an escalation for a ticket in its tenant
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:tickets:escalate"
+    resource: tickets/t_5002
+    expect: allow
+    rule: support-agents-can-escalate-tickets
+
+  - name: a human agent may escalate a ticket too
+    subjects: [user:ana, "role:human_agent"]
+    tenant: acme
+    action: "tool:tickets:escalate"
+    resource: tickets/t_5002
+    expect: allow
+    rule: support-agents-can-escalate-tickets
+
+  - name: an analyst may not escalate a ticket
+    subjects: [user:gus, "role:analyst"]
+    tenant: acme
+    action: "tool:tickets:escalate"
+    resource: tickets/t_5002
+    expect: deny
+    rule: null
+
+  - name: escalation names a ticket, not a document or a path out of tickets/
+    subjects: [agent:copilot, "role:support_copilot"]
+    tenant: acme
+    action: "tool:tickets:escalate"
+    resource: docs/refund-policy.md
+    expect: deny
+    rule: null
+
   # ── S3: top-level docs/ and tickets/ only ────────────────────────────────
   - name: copilot reads a doc
     subjects: [agent:copilot, "role:support_copilot"]

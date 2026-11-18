@@ -16,9 +16,10 @@ pytest.importorskip("langgraph")
 pytest.importorskip("langchain_core")
 
 from scout_mcp.agents import cli  # noqa: E402
-from scout_mcp.agents.graphs.ask import ToolCall, final_calls, run_ask  # noqa: E402
+from scout_mcp.agents.graphs.ask import ALLOWED_TOOLS, ToolCall, final_calls, run_ask  # noqa: E402
 from scout_mcp.agents.ledger import Ledger  # noqa: E402
 from scout_mcp.agents.mcp_client import ToolResult  # noqa: E402
+from scout_mcp.tools.registry import ToolRegistry  # noqa: E402
 from tests.fakes import FakeMCP  # noqa: E402
 from tests.fakes_lc import ScriptedChat  # noqa: E402
 
@@ -108,6 +109,17 @@ async def test_tool_calls_run_in_parallel():
 async def test_each_tool_call_carries_what_the_run_has_left():
     _, mcp, _ = await go([plan(), GOOD], [ok(CONTEXT)], timeout_s=30)
     assert 0 < mcp.calls[0][2] <= 30_000
+
+
+# ── what the model may never be offered ────────────────────────────────────
+async def test_no_tool_that_writes_is_on_the_allow_list():
+    registry = ToolRegistry()
+    await registry.discover()
+    by_name = {t.meta.name: t.meta for t in registry}
+    assert ALLOWED_TOOLS <= set(by_name), "the allow-list names a tool that does not exist"
+    writers = {name for name, meta in by_name.items() if meta.destructive or not meta.read_only}
+    assert {"s3.put_object", "ticket.escalate"} <= writers
+    assert not writers & ALLOWED_TOOLS
 
 
 # ── what code decides ──────────────────────────────────────────────────────

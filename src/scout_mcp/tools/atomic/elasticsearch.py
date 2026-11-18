@@ -54,6 +54,10 @@ class ElasticsearchSearchTool(Tool):
         super().__init__(policy)
         self.settings = get_settings()
 
+    def client(self) -> AsyncElasticsearch:
+        """The client every tool that talks to this cluster shares."""
+        return self._es()
+
     def _es(self) -> AsyncElasticsearch:
         if ElasticsearchSearchTool._client is None:
             auth = self.settings.elasticsearch_password

@@ -48,6 +48,14 @@
       }
     },
     {
+      "name": "tool:tickets:escalate",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      }
+    },
+    {
       "name": "tool:http:fetch",
       "protocol": "openid-connect",
       "attributes": {
@@ -82,7 +90,8 @@
         "tool:postgres:read",
         "tool:elasticsearch:read",
         "tool:vector:read",
-        "tool:s3:read"
+        "tool:s3:read",
+        "tool:tickets:escalate"
       ],
       "optionalClientScopes": [],
       "attributes": {
@@ -148,7 +157,8 @@
         "tool:postgres:read",
         "tool:elasticsearch:read",
         "tool:vector:read",
-        "tool:s3:read"
+        "tool:s3:read",
+        "tool:tickets:escalate"
       ],
       "optionalClientScopes": [],
       "attributes": {
