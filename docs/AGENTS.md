@@ -55,7 +55,7 @@ python scripts/bench_stack.py 200 10
 
 | Job | What it proves |
 |-----|----------------|
-| `test` | Lint, 313 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
+| `test` | Lint, 360 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
 | `validate-deploy` | Compose resolves, Prometheus rules parse and pass their unit tests, Caddyfile validates, realm and dashboard are valid JSON, Dockerfile lint |
 | `stack` | Image builds, every service gets healthy, demo data loads, a sample file is ingested for acme (and ingesting it again embeds nothing), 41 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
 | `security` | `pip-audit` on dependencies, Trivy on the Dockerfile, and Trivy on the built image, which fails on any fixable HIGH or CRITICAL finding |
