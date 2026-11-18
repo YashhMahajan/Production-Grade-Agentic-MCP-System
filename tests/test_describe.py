@@ -131,7 +131,7 @@ async def test_the_sql_is_fixed_names_travel_as_parameters_inside_a_read_only_tr
     pool.conn.fetch = fetch
     await tool._fetch("acme", "public", ["orders"])
     log = pool.conn.log
-    assert log[0] == ("begin", True) and log[1][0] == "execute" and log[1][2] == ("acme",)
+    assert log[0] == ("begin", True) and log[1] == ("execute", "SET LOCAL app.tenant_id = 'acme'", ())
     sqls = [e[1] for e in log if e[0] == "fetch"]
     assert sqls == [pg.DESCRIBE_COLUMNS_SQL, pg.DESCRIBE_FOREIGN_KEYS_SQL]
     assert [e[2] for e in log if e[0] == "fetch"][0] == ("public", ["orders"])
