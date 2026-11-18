@@ -55,7 +55,7 @@ python scripts/bench_stack.py 200 10
 
 | Job | What it proves |
 |-----|----------------|
-| `test` | Lint, 423 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
+| `test` | Lint, 423 tests, the policy cases (`scout-mcp policy test --strict`), the copilot replay evals, request-overhead benchmark |
 | `validate-deploy` | Compose resolves, Prometheus rules parse and pass their unit tests, Caddyfile validates, realm and dashboard are valid JSON, Dockerfile lint |
 | `stack` | Image builds, every service gets healthy, demo data loads, a sample file is ingested for acme (and ingesting it again embeds nothing), 43 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
 | `secrets` | `gitleaks` over the commits a pull request adds, with the development-only files in `.gitleaks.toml` allowed; fails on a credential |
@@ -93,6 +93,9 @@ Load policy.yaml at startup and fail if it is missing
 | Writes | one: `ticket.escalate`, which only the `escalate` command may call, as a request the server holds for a reviewer; the copilot has no `approval:review` scope and no approve path. The allow-lists of `ask` and `draft` have no write tool, and a test checks every tool in the registry against them | `agents/graphs/escalate.py`, `agents/graphs/ask.py`, `tools/atomic/ticket_escalate.py` |
 | `escalate` | no model call; shows the ticket and reason and waits for a yes (`--yes` skips the question); a no sends nothing; after approval, `--approval ID` makes the approved call once | `agents/graphs/escalate.py`, `agents/cli.py` |
 | LLM models | primary `SCOUT_LLM_MODEL`, then `SCOUT_LLM_FALLBACK_MODEL` on an error or empty reply, but not on a 400-403 or a 429 that names a per-day cap; both free on OpenRouter, same key. With `SCOUT_ENV=production` a `:free` model is refused unless `SCOUT_ALLOW_FREE_LLM=1` | `agents/llm.py`, `agents/cli.py` |
+| Tracing | off unless `SCOUT_LANGSMITH=1` and `LANGSMITH_API_KEY` are set; sends keys and string lengths, never text; metadata from an allow-list; the tenant only as an HMAC under `SCOUT_TRACE_SALT`; LangChain's own tracing is forced off | `agents/tracing.py` |
+| Replay evals | 18 hand-written cases run through the real draft graph with replayed model replies, no model and no network; `scripts/eval_copilot.py` exits 1 if any case disagrees with its label (CI runs it); `--langsmith` uploads the cases as a dataset. They measure the graph and its checks, not any model | `agents/evals.py`, `tests/replays/draft_cases.json` |
+| Tests and hosts | no test can resolve `openrouter.ai` or `smith.langchain.com`; a push never calls a model or sends a trace | `tests/conftest.py` |
 | SLA flags | targets from `config/sla.yaml` (`SCOUT_SLA_FILE`): nearing at 75% of the target, past beyond it; open and pending tickets only; no target means no flag | `agents/sla.py` |
 | `activity` | one `customer.activity_since` call and no model; creation times only | `agents/cli.py` |
 | `brief` | no model call and no LLM key; fixed-rule flags only | `agents/brief.py` |

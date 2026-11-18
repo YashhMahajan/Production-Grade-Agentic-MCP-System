@@ -171,11 +171,12 @@ def assemble_graph(run: DraftRun, front: list[tuple[str, Callable[[DraftState], 
     return g.compile()
 
 
-async def execute(run: DraftRun, front: list, customer_id: str, question: str) -> DraftResult:
-    """Run the graph and report what happened."""
+async def execute(run: DraftRun, front: list, customer_id: str, question: str,
+                  trace: dict | None = None) -> DraftResult:
+    """Run the graph and report what happened. ``trace`` is a LangChain config that makes the run traced."""
     state = await assemble_graph(run, front).ainvoke(
         {"customer_id": customer_id, "question": question, "llm_calls": 0, "revisions": 0},
-        config={"recursion_limit": RECURSION_LIMIT})
+        config={"recursion_limit": RECURSION_LIMIT, **(trace or {})})
     outcome = state["outcome"]
     text = assemble(run.out) if run.out and outcome in ("approved", "flagged") else ""
     return DraftResult(outcome=outcome, text=text, reason=state.get("reason"),

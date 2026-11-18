@@ -30,6 +30,15 @@ jobs:
       - run: pytest -q
       - name: Policy cases pass and every rule decides one
         run: scout-mcp policy test --strict
+      - name: Copilot replay evals (hand-written replies, no model, no network)
+        run: |
+          python scripts/eval_copilot.py | tee eval-replays.json
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("eval-replays.json"))
+          print("### Copilot replay evals\n")
+          print(f"{d['agreed']} of {d['cases']} cases agree with their labels. Outcomes: {d['outcomes']}.")
+          PY
       - name: Request-overhead benchmark
         run: |
           python scripts/bench_pipeline.py 1000 | tee bench-pipeline.json

@@ -48,6 +48,7 @@ from scout_mcp.agents.brief import make_activity, make_brief
 from scout_mcp.agents.ids import extract_customer_id
 from scout_mcp.agents.ledger import Ledger
 from scout_mcp.agents.mcp_client import ScoutMCPClient, fetch_token
+from scout_mcp.agents import tracing
 from scout_mcp.agents.sla import Sla, SlaError, TenantSla
 
 EXIT_OK, EXIT_NOT_OK, EXIT_USAGE, EXIT_EVIDENCE = 0, 1, 2, 3
@@ -104,14 +105,15 @@ async def _confirm_without_asking(proposal: str) -> bool:
     return True
 
 
-async def escalate_command(mcp, ticket_id: str, reason: str, confirm, approval_id: str | None = None) -> tuple[str, int]:
+async def escalate_command(mcp, ticket_id: str, reason: str, confirm, approval_id: str | None = None,
+                           trace: dict | None = None) -> tuple[str, int]:
     """Ask for a ticket to be escalated, after ``confirm`` agrees. No model."""
     try:
         from scout_mcp.agents.graphs.escalate import run_escalate
     except ImportError:
         return 'this command needs the copilot extra: pip install ".[copilot]"', EXIT_USAGE
     try:
-        result = await run_escalate(mcp, ticket_id, reason, confirm, approval_id)
+        result = await run_escalate(mcp, ticket_id, reason, confirm, approval_id, trace)
     except httpx.HTTPError as exc:
         return f"The tools could not be reached ({type(exc).__name__}).", EXIT_NOT_OK
     if result.outcome == "pending_approval":
@@ -179,22 +181,25 @@ async def _with_model(mcp, customer_id: str, ledger: Ledger, now: datetime, sla:
 
 
 async def draft_command(mcp, customer_id: str, question: str, ledger: Ledger, now: datetime,
-                        models: list | None = None, sla: TenantSla | None = None) -> tuple[str, int]:
+                        models: list | None = None, sla: TenantSla | None = None,
+                        trace: dict | None = None) -> tuple[str, int]:
     """A cited, checked reply for one customer, from one fixed tool call."""
     async def run(models, cap, timeout_s):
         from scout_mcp.agents.graphs.draft import run_draft
         return await run_draft(mcp, models, customer_id, question, now, max_llm_calls=cap,
-                               timeout_s=timeout_s, sla=sla)
+                               timeout_s=timeout_s, sla=sla, trace=trace)
 
     return await _with_model(mcp, customer_id, ledger, now, sla, models, "SCOUT_DRAFT_MAX_LLM_CALLS", 3, run)
 
 
 async def ask_command(mcp, question: str, ledger: Ledger, now: datetime,
-                      models: list | None = None, sla: TenantSla | None = None) -> tuple[str, int]:
+                      models: list | None = None, sla: TenantSla | None = None,
+                      trace: dict | None = None) -> tuple[str, int]:
     """A cited, checked answer to a free-text question, from tools the model picks once."""
     async def run(models, cap, timeout_s):
         from scout_mcp.agents.graphs.ask import run_ask
-        return await run_ask(mcp, models, question, now, max_llm_calls=cap, timeout_s=timeout_s, sla=sla)
+        return await run_ask(mcp, models, question, now, max_llm_calls=cap, timeout_s=timeout_s, sla=sla,
+                             trace=trace)
 
     return await _with_model(mcp, extract_customer_id(question) or "", ledger, now, sla, models,
                              "SCOUT_AGENT_MAX_LLM_CALLS", 6, run)
@@ -223,6 +228,8 @@ async def _main(command: str, argument: str, *, yes: bool = False, approval_id: 
         token = await fetch_token(token_url, client_id, client_secret, verify=verify)
 
     now = datetime.now(timezone.utc)
+    trace = tracing.trace_config(command, tenant) if command in ("ask", "draft", "escalate") else None
+    tracing.disable_ambient_tracing()
     try:
         sla = Sla.load().for_tenant(tenant)
     except FileNotFoundError:
@@ -241,12 +248,14 @@ async def _main(command: str, argument: str, *, yes: bool = False, approval_id: 
         elif command == "escalate":
             ticket_id, _, reason = argument.partition(" ")
             confirm = _confirm_without_asking if yes else _confirm_at_the_terminal
-            text, code = await escalate_command(mcp, ticket_id, reason.strip(), confirm, approval_id)
+            text, code = await escalate_command(mcp, ticket_id, reason.strip(), confirm, approval_id, trace)
         elif command == "draft":
             customer_id, _, question = argument.partition(" ")
-            text, code = await draft_command(mcp, customer_id.upper(), question.strip(), Ledger(), now, sla=sla)
+            text, code = await draft_command(mcp, customer_id.upper(), question.strip(), Ledger(), now,
+                                             sla=sla, trace=trace)
         else:
-            text, code = await ask_command(mcp, argument, Ledger(), now, sla=sla)
+            text, code = await ask_command(mcp, argument, Ledger(), now, sla=sla, trace=trace)
+    tracing.flush(trace)
     print(text)
     return code
 
