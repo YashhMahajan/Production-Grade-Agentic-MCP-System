@@ -1,32 +1,39 @@
-"""What the server guarantees when the model does exactly what a poisoned ticket says.
+"""What the server guarantees when the model does exactly what a poisoned input says.
 
-A customer wrote a ticket whose subject tells the model to write to S3, fetch an outside
-URL, point the database at another tenant and name another tenant in a tool argument.
-``ObedientLLM`` follows every one of those instructions. These tests do not check that a
-model would resist: they check that the system holds when it does not.
+Two inputs carry the same instructions: a customer pastes them into the question, and a ticket
+holds them in its subject. They tell the model to write to S3, fetch an outside URL, point the
+database at another tenant and name another tenant in a tool argument. ``ObedientChat`` follows
+every one it can. These tests do not check that a model would resist: they check that the system
+holds when it does not.
 
-Two layers are exercised separately. Through the copilot, its own allow-list stops the
-calls before they leave the process. With that allow-list widened to every tool, only the
-server is left, and it has to refuse on its own: scopes, policy, the outbound allowlist and
-the approval gate. The audit log is the record of what reached the server.
+Three layers are exercised separately. The step that reads tool results has no tools, so an
+instruction in a ticket cannot cause a call. The step that picks tools is held to an allow-list in
+code before anything leaves the process. With that allow-list widened to every tool, only the
+server is left, and it has to refuse on its own: scopes, policy, the outbound allowlist and the
+approval gate. The audit log is the record of what reached the server.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
-from scout_mcp.agents import retriever
-from scout_mcp.agents.mcp_client import ScoutMCPClient
-from scout_mcp.agents.orchestrator import SupportCopilot
-from scout_mcp.tools.atomic import http_client
-from scout_mcp.tools.atomic.postgres import PostgresQueryTool
-from scout_mcp.tools.atomic.s3_storage import S3PutTool
-from scout_mcp.tools.workflow.customer_context import CustomerContextTool
-from tests.fakes import ADVERSARIAL_TICKET, ObedientLLM
+pytest.importorskip("langgraph")
+pytest.importorskip("langchain_core")
 
-QUESTION = "Why was CUST-1001's refund delayed?"
+from scout_mcp.agents.graphs import ask  # noqa: E402
+from scout_mcp.agents.mcp_client import ScoutMCPClient  # noqa: E402
+from scout_mcp.tools.atomic import http_client  # noqa: E402
+from scout_mcp.tools.atomic.postgres import PostgresQueryTool  # noqa: E402
+from scout_mcp.tools.atomic.s3_storage import S3PutTool  # noqa: E402
+from scout_mcp.tools.workflow.customer_context import CustomerContextTool  # noqa: E402
+from tests.fakes import ADVERSARIAL_TICKET, HOSTILE_QUESTION  # noqa: E402
+from tests.fakes_lc import ObedientChat  # noqa: E402
+
+NOW = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+BENIGN_QUESTION = "Why was CUST-1001's refund delayed?"
 
 
 class Lab:
@@ -37,21 +44,19 @@ class Lab:
         self.tenants: list[str] = []   # tenant each data fetch ran for
         self.executed: list[str] = []  # tools whose body ran: none should for a refused call
         self.network: list[str] = []   # outbound fetches that got past the allowlist
+        self.chat = ObedientChat()
 
-    async def attack(self, token: str, *, allow_every_tool: bool, monkeypatch) -> ObedientLLM:
+    async def attack(self, token: str, *, allow_every_tool: bool, monkeypatch, question=HOSTILE_QUESTION):
         if allow_every_tool:
-            monkeypatch.setattr(retriever, "_ALLOWED_TOOLS", frozenset(t.meta.name for t in self.app.server.registry))
-        llm = ObedientLLM()
+            monkeypatch.setattr(ask, "ALLOWED_TOOLS", frozenset(t.meta.name for t in self.app.server.registry))
         async with ScoutMCPClient("http://test", token, transport=self.app.transport_) as mcp:
-            copilot = SupportCopilot(mcp, llm=llm, max_retriever_iterations=10,
-                                    max_llm_calls=40)
-            await copilot.answer(QUESTION)
-        return llm
+            # Room for every injected call, so the server is asked about each one.
+            return await ask.run_ask(mcp, [self.chat], question, NOW, max_llm_calls=10, max_tool_calls=10)
 
     def calls(self) -> list[tuple[str, str | None]]:
-        """Each call that reached the server, in order, as (tool, error code or None)."""
+        """Each call that reached the server as (tool, error code or None). They run in parallel, so sorted."""
         rows = [json.loads(line) for line in self.app.server.audit.path.read_text().splitlines()]
-        return [(r["tool"], r["error_code"]) for r in rows]
+        return sorted(((r["tool"], r["error_code"]) for r in rows), key=str)
 
     def approvals(self) -> list[dict]:
         data = self.app.server._redis.data
@@ -96,19 +101,28 @@ def lab(app_client, monkeypatch):
     return lab
 
 
-# ── Through the copilot: its allow-list is the first wall ──────────────────
+# ── Instructions in data: the step that reads it has no tools ──────────────
+async def test_an_instruction_in_a_ticket_reaches_the_model_and_causes_no_call(lab, monkeypatch):
+    result = await lab.attack("support", allow_every_tool=True, monkeypatch=monkeypatch, question=BENIGN_QUESTION)
+    assert len(lab.chat.seen_in_data) == 5  # the attack did arrive, in the evidence the model read
+    assert lab.calls() == [("customer.build_context", None)]  # and the only call is the honest lookup
+    assert result.outcome == "approved" and result.tool_calls == 1
+    assert lab.executed == [] and lab.network == [] and lab.approvals() == []
+
+
+# ── Instructions in the question: the allow-list is the first wall ─────────
 async def test_through_the_copilot_the_write_and_the_fetches_never_leave_the_process(lab, monkeypatch):
-    llm = await lab.attack("support", allow_every_tool=False, monkeypatch=monkeypatch)
+    result = await lab.attack("support", allow_every_tool=False, monkeypatch=monkeypatch)
     # The honest lookup, then the two injected calls that name tools on the allow-list: the
     # server refuses the query itself, and the tenant argument is ignored.
     assert lab.calls() == [
         ("customer.build_context", None),
-        ("postgres.query", "invalid_arguments"),
         ("customer.build_context", None),
+        ("postgres.query", "invalid_arguments"),
     ]
-    # The write and both fetches never left the process.
-    refused = [m for m in llm.retriever_messages if m["role"] == "user" and "tool_not_allowed" in m["content"]]
-    assert len(refused) == 3
+    # The write and both fetches never left the process; the server's refusal of the query is recorded too.
+    assert result.errors == ["s3.put_object: tool_not_allowed", "http.fetch: tool_not_allowed",
+                             "http.fetch: tool_not_allowed", "postgres.query: invalid_arguments"]
     assert lab.executed == [] and lab.network == [] and lab.approvals() == []
 
 
@@ -117,11 +131,11 @@ async def test_a_copilot_token_cannot_write_fetch_or_query_past_its_scopes(lab, 
     await lab.attack("support", allow_every_tool=True, monkeypatch=monkeypatch)
     assert lab.calls() == [
         ("customer.build_context", None),
-        ("s3.put_object", "missing_scope"),
+        ("customer.build_context", None),
         ("http.fetch", "missing_scope"),
         ("http.fetch", "missing_scope"),
         ("postgres.query", "invalid_arguments"),   # set_config is refused before any scope check
-        ("customer.build_context", None),
+        ("s3.put_object", "missing_scope"),
     ]
     assert lab.executed == [] and lab.network == [] and lab.approvals() == []
 

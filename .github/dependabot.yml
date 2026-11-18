@@ -16,3 +16,7 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      # The Dockerfile and CI use Python 3.11 on purpose. Patch updates only.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

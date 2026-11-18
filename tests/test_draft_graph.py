@@ -50,11 +50,11 @@ class Err(Exception):
         self.status_code = status
 
 
-async def go(replies, context=CONTEXT, cap=3, question=Q, models=None):
+async def go(replies, context=CONTEXT, cap=3, question=Q, models=None, **kw):
     result = ToolResult(ok=True, value=context)
     mcp = FakeMCP([result])
     chat = ScriptedChat(replies=list(replies))
-    out = await run_draft(mcp, models or [chat], "CUST-1001", question, NOW, max_llm_calls=cap)
+    out = await run_draft(mcp, models or [chat], "CUST-1001", question, NOW, max_llm_calls=cap, **kw)
     return out, mcp, chat
 
 
@@ -99,6 +99,17 @@ async def test_the_cap_stops_a_revision_and_flags_the_draft():
 async def test_the_cap_stops_a_repair():
     out, _, _ = await go(["nope", GOOD], cap=1)
     assert out.outcome == "evidence_pack" and out.reason == "call_budget" and out.llm_calls == 1
+
+
+# ── time ───────────────────────────────────────────────────────────────────
+async def test_each_tool_call_carries_what_the_run_has_left():
+    _, mcp, _ = await go([GOOD], timeout_s=30)
+    assert 0 < mcp.calls[0][2] <= 30_000
+
+
+async def test_a_spent_time_budget_ends_the_run_before_any_model_call():
+    out, _, chat = await go([GOOD], timeout_s=0.0)
+    assert out.outcome == "evidence_pack" and out.reason == "time_budget" and chat.seen == []
 
 
 # ── models failing ─────────────────────────────────────────────────────────

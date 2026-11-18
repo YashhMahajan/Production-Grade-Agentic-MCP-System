@@ -13,7 +13,7 @@ from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.tools.atomic import postgres as pg
 from scout_mcp.tools.atomic.postgres import PostgresDescribeInput, PostgresDescribeTool
 from scout_mcp.tools.base import CALLER
-from tests.conftest import call
+from tests.conftest import call, rpc
 from tests.test_tools import FakePool
 
 COLUMNS = [  # (table, column, type, nullable), in ordinal order
@@ -152,7 +152,10 @@ async def test_through_the_server_the_caller_roles_decide_what_is_shown(app_clie
     assert not is_error and [t["name"] for t in out["tables"]] == ["orders"]
 
 
-async def test_the_agent_may_call_it_and_is_told_to(app_client):
-    from scout_mcp.agents import retriever
-    from scout_mcp.agents.prompts import RETRIEVER_SYSTEM
-    assert "postgres.describe" in retriever._ALLOWED_TOOLS and "postgres.describe" in RETRIEVER_SYSTEM
+async def test_the_agent_may_call_it_and_is_offered_it(app_client):
+    pytest.importorskip("langgraph")
+    from scout_mcp.agents.graphs import ask
+    _, body = await rpc(app_client, "tools/list", token="support")
+    specs = [t for t in body["result"]["tools"] if t["name"] in ask.ALLOWED_TOOLS]
+    assert "postgres.describe" in ask.ALLOWED_TOOLS
+    assert "- postgres.describe:" in ask._plan_prompt("What columns does orders have?", "", specs)

@@ -53,27 +53,6 @@ class ToolResult:
     hint: str | None = None
     context: dict | None = None
 
-    def render(self) -> str:
-        """The result as JSON text, before it is marked as data."""
-        if self.ok:
-            return json.dumps({"ok": True, "result": self.value}, default=str, indent=2)
-        return json.dumps(
-            {
-                "ok": False,
-                "error": self.error_code,
-                "retryable": self.retryable,
-                "hint": self.hint,
-            },
-            indent=2,
-        )
-
-    def as_agent_observation(self, max_chars: int | None = None) -> str:
-        """Render for an LLM prompt, cut to ``max_chars`` and marked as data."""
-        text = self.render()
-        if max_chars is not None and len(text) > max_chars:
-            text = text[:max_chars] + "... (truncated)"
-        return wrap_untrusted(text)
-
 
 class ScoutMCPClient:
     """Minimal JSON-RPC 2.0 client over Streamable HTTP."""

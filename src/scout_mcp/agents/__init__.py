@@ -1,15 +1,17 @@
-"""The agents that sit on top of Scout-MCP.
+"""The copilot that sits on top of Scout-MCP.
 
-Scout-MCP exposes tools. This package exposes agents that use those tools to solve a
-concrete problem end to end: customer support.
+Scout-MCP exposes tools. This package uses them to help a support agent: a customer brief and
+a list of what is new (no model), and cited replies from a model (``draft`` for one customer,
+``ask`` for a free-text question).
 
-There are two paths. ``ask`` is the original hand-written loop: a planner, a tool-calling
-retriever, a synthesizer and a critic, each a direct OpenRouter call. ``draft`` is a
-LangGraph state graph over fixed steps (load evidence, draft, check, revise) with
-LangChain chat models. The graph path lives in ``graphs/`` and needs the ``copilot``
-extra; nothing the server imports touches it.
+Both model flows are one LangGraph state graph (``graphs/``): evidence is gathered, a model writes
+claims that each cite it, code checks every claim, and a failed check gets one revision. They differ
+only in how evidence is gathered. ``draft`` makes one fixed tool call. ``ask`` lets a model propose a
+few read-only tools once, and code decides what runs. The step that reads tool results has no
+tools, so text in a ticket cannot cause a call. The graph needs the ``copilot`` extra; nothing
+the server imports touches it.
 
-What both paths rely on is written by hand and tested here, not left to a framework's
-defaults: the MCP client with its deadline and rate-limit handling, the allow-list,
-redaction, the call counts and the daily ledger, and the claim and citation checks.
+What both flows rely on is written by hand and tested here, not left to a framework's defaults:
+the MCP client with its deadline and rate-limit handling, the allow-list, redaction, the call
+counts and the daily ledger, and the claim checks.
 """
