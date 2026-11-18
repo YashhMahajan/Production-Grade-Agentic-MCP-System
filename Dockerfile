@@ -17,8 +17,11 @@ COPY pyproject.toml ./
 COPY README.md ./
 COPY src ./src
 
+# Empty for the server image. The copilot image is built with EXTRAS="[copilot]", which adds the
+# agent framework; the server never imports it, so the server image does not carry it.
+ARG EXTRAS=""
 RUN pip install --upgrade pip build && \
-    pip wheel --wheel-dir /wheels .
+    pip wheel --wheel-dir /wheels ".${EXTRAS}"
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────
 FROM python:3.11-slim
@@ -38,11 +41,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd --system --uid 10001 --home /app scout
 WORKDIR /app
 
+ARG EXTRAS=""
 COPY --from=builder /wheels /wheels
 # The base image's pip, setuptools and wheel carry advisories of their own (wheel 0.45.1,
 # jaraco.context inside setuptools, an older setuptools), and nothing builds at runtime.
 # Install the app, then remove the build tooling and pip's bundled install wheels.
-RUN pip install --no-index --find-links=/wheels scout-mcp && rm -rf /wheels \
+RUN pip install --no-index --find-links=/wheels "scout-mcp${EXTRAS}" && rm -rf /wheels \
     && pip uninstall -y setuptools wheel pip \
     && rm -rf /usr/local/lib/python3.11/ensurepip/_bundled
 

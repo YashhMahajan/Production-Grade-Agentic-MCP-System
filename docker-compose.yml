@@ -127,8 +127,11 @@ services:
   # One-shot: the support copilot, run inside the stack so it needs no host TLS setup.
   #   docker compose --profile copilot run --rm copilot "your question"
   copilot:
-    build: .
-    image: scout-mcp:dev
+    # Same Dockerfile as the server, with the agent framework added.
+    build:
+      context: .
+      args: { EXTRAS: "[copilot]" }
+    image: scout-mcp-copilot:dev
     profiles: [ copilot ]
     networks: [ app ]
     entrypoint: [ "scout-copilot" ]
@@ -142,6 +145,10 @@ services:
       SCOUT_LLM_MODEL: ${SCOUT_LLM_MODEL:-google/gemma-4-31b-it:free}
       SCOUT_LLM_BASE_URL: ${SCOUT_LLM_BASE_URL:-https://openrouter.ai/api/v1}
       SCOUT_LLM_FALLBACK_MODEL: ${SCOUT_LLM_FALLBACK_MODEL-inclusionai/ling-3.2-flash:free}
+      SCOUT_AGENT_MAX_LLM_CALLS: ${SCOUT_AGENT_MAX_LLM_CALLS:-6}
+      SCOUT_DRAFT_MAX_LLM_CALLS: ${SCOUT_DRAFT_MAX_LLM_CALLS:-3}
+      SCOUT_LLM_DAILY_LIMIT: ${SCOUT_LLM_DAILY_LIMIT:-40}
+      SCOUT_ALLOW_FREE_LLM: ${SCOUT_ALLOW_FREE_LLM:-0}
     depends_on:
       scout-mcp: { condition: service_healthy }
       keycloak: { condition: service_healthy }
