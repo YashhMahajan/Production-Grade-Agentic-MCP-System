@@ -8,7 +8,8 @@ import pytest
 
 from scout_mcp.agents.claims import Claim, DraftOut, assemble, build_evidence, check_draft
 from scout_mcp.agents.sla import Sla
-from scout_mcp.agents.llm import CallBudget, FinalLLMError, LLMUnavailable, classify, invoke_models, parse_json_lenient
+from scout_mcp.agents.llm import (
+    CallBudget, FinalLLMError, LLMUnavailable, classify, invoke_models, model_names, parse_json_lenient)
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
 CONTEXT = {
@@ -195,3 +196,24 @@ def test_the_json_object_is_found_inside_a_fence_or_stray_prose(text):
 def test_a_reply_with_no_json_object_raises(text):
     with pytest.raises(ValueError):
         parse_json_lenient(text)
+
+
+# ── which models ───────────────────────────────────────────────────────────
+def test_the_primary_comes_first_and_the_fallback_second(monkeypatch):
+    monkeypatch.setenv("SCOUT_LLM_MODEL", "a:free")
+    monkeypatch.setenv("SCOUT_LLM_FALLBACK_MODEL", "b:free")
+    assert model_names() == ["a:free", "b:free"]
+
+
+@pytest.mark.parametrize("fallback", ["", "a:free"])
+def test_an_empty_or_repeated_fallback_means_one_model(monkeypatch, fallback):
+    monkeypatch.setenv("SCOUT_LLM_MODEL", "a:free")
+    monkeypatch.setenv("SCOUT_LLM_FALLBACK_MODEL", fallback)
+    assert model_names() == ["a:free"]
+
+
+def test_the_defaults_are_two_different_free_models(monkeypatch):
+    monkeypatch.delenv("SCOUT_LLM_MODEL", raising=False)
+    monkeypatch.delenv("SCOUT_LLM_FALLBACK_MODEL", raising=False)
+    names = model_names()
+    assert len(names) == 2 and names[0] != names[1] and all(n.endswith(":free") for n in names)

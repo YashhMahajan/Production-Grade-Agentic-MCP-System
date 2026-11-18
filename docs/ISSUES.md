@@ -50,7 +50,7 @@ What I found when I audited the repo and then ran it for real, and what I did ab
 | 30 | Every data store was unauthenticated and published a host port | Internal network, a credential on each | `test_stores_and_the_app_are_not_reachable_from_the_host`, `test_every_store_demands_credentials` |
 | 31 | `/metrics` and `/readyz` were reachable by anyone who could reach the server | Edge forwards an explicit path list | `test_edge_forwards_only_public_paths_and_sets_security_headers` |
 | 32 | `http.fetch` could reach loopback and cloud-metadata addresses through an allowlisted name | Resolved address checked | `test_fetch_refuses_loopback_and_metadata_addresses` |
-| 33 | LLM fallback sent customer text to four providers, one of them paid, by default | Two OpenRouter models on one key, fallback can be turned off | `test_llm_fallback_can_be_turned_off` |
+| 33 | LLM fallback sent customer text to four providers, one of them paid, by default | Two OpenRouter models on one key, fallback can be turned off | `test_an_empty_or_repeated_fallback_means_one_model` |
 | 34 | The version was written in three places and drifted | One source, the package metadata | `test_reported_version_matches_pyproject` |
 | 35 | Nothing issued a JWT, so the copilot could not authenticate | Keycloak realm, one client per persona | `test_keycloak_tokens_carry_what_scout_checks` |
 | 36 | Nothing could approve a pending call | Review endpoints; the requester cannot approve | `tests/test_approvals.py`, `test_destructive_call_waits_for_a_human_then_runs_once` |
