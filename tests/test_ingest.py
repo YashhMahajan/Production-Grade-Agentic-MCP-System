@@ -155,8 +155,8 @@ class FakeConn:
 
     async def execute(self, sql, *args):
         self.log.append(("execute", sql, args))
-        if "set_config" in sql:
-            self.tenant = args[0]
+        if sql.startswith("SET app.tenant_id"):
+            self.tenant = sql.split("'")[1]
 
     async def fetchrow(self, sql, *args):
         self.log.append(("fetchrow", sql, args))

@@ -22,7 +22,11 @@ MAX_WORDS = 180
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _COMMITMENTS = [
-    re.compile(r"\b(?:we|i)(?:'ll| will| can)\s+(?:refund|credit|replace|waive|cancel|reimburse)", re.I),
+    re.compile(r"\b(?:we|i)(?:'ll|\s+will|\s+can|\s+shall|(?:'re|\s+are|'m|\s+am)\s+going\s+to"
+               r"|\s+would\s+be\s+happy\s+to)\s+(?:also\s+|gladly\s+)?"
+               r"(?:refund|credit|replace|waive|cancel|reimburse|compensate)", re.I),
+    re.compile(r"\byou(?:'ll|\s+will)\s+(?:receive|get)\s+(?:a|your|the)\s+(?:full\s+)?"
+               r"(?:refund|credit|replacement)", re.I),
     re.compile(r"\bguarantee", re.I),
     re.compile(r"\bpromise", re.I),
     re.compile(r"\b(?:has|have) been (?:refunded|credited|approved|waived)", re.I),

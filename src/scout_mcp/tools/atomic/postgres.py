@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.config import get_settings
 from scout_mcp.errors.framework import UpstreamError
+from scout_mcp.tenant_sql import set_tenant_sql
 from scout_mcp.tools.base import CALLER, Tool, ToolLevel, ToolMetadata
 
 # The forbidden keywords list is our defense-in-depth against prompt injection. Even if the policy engine has a bug, this list makes it impossible for any SQL containing DROP to execute through this tool.
@@ -129,10 +130,10 @@ class PostgresQueryTool(Tool):
         try:
             async with pool.acquire() as conn:
                 # Read-only transaction: even a SELECT that slips past the keyword
-                # filter cannot write. set_config(..., true) is the transaction-local
-                # form of SET; SET itself cannot take a bind parameter.
+                # filter cannot write. SET LOCAL is transaction-local, and a SELECT cannot
+                # issue it. set_config() is refused to this role by the database itself.
                 async with conn.transaction(readonly=True):
-                    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant)
+                    await conn.execute(set_tenant_sql(tenant))
                     cursor = await conn.cursor(args.sql, *args.params)
                     # One extra row tells us whether the result was cut off.
                     rows = await cursor.fetch(args.max_rows + 1)
@@ -250,7 +251,7 @@ class PostgresDescribeTool(Tool):
         try:
             async with pool.acquire() as conn:
                 async with conn.transaction(readonly=True):
-                    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant)
+                    await conn.execute(set_tenant_sql(tenant))
                     columns = await conn.fetch(DESCRIBE_COLUMNS_SQL, schema, tables)
                     keys = await conn.fetch(DESCRIBE_FOREIGN_KEYS_SQL, schema)
         except asyncpg.PostgresError as exc:

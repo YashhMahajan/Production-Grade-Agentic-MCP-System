@@ -25,6 +25,8 @@ from pathlib import Path
 
 import httpx
 
+from scout_mcp.tenant_sql import set_tenant_sql
+
 DEFAULT_COLLECTION = "support_docs"
 DEFAULT_INDEX = "documents"
 META_INDEX = "scout_meta"
@@ -226,7 +228,7 @@ class PostgresStore:
         if self._conn is None:
             self._conn = await self._connect()
         if self._tenant != doc.tenant:
-            await self._conn.execute("SELECT set_config('app.tenant_id', $1, false)", doc.tenant)
+            await self._conn.execute(set_tenant_sql(doc.tenant, local=False))
             self._tenant = doc.tenant
         row = await self._conn.fetchrow(_UPSERT_DOCUMENT, doc.id, doc.tenant, doc.title, doc.body, doc.url)
         if row is None:

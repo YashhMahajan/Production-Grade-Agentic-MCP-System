@@ -70,14 +70,21 @@ def test_a_claim_with_no_citation_fails():
 @pytest.mark.parametrize("text", [
     "We will refund the order.", "I will refund you today.", "We guarantee a reply.",
     "The refund has been approved.", "It will be refunded soon.", "We promise a fix.",
+    "We shall refund this.", "We're going to credit your account.", "We are going to waive the fee.",
+    "You will receive a full refund.", "You'll get your refund.", "I would be happy to waive the fee.",
+    "We'll gladly replace it.", "We can also compensate you.",
 ])
 def test_a_commitment_fails(text):
     assert any("commits" in p for p in check_draft(draft((text, [2])), evidence()))
 
 
-def test_saying_a_refund_needs_approval_is_not_a_commitment():
-    out = draft(("Order o_9021 is refund_pending and the refund needs human approval.", [2]))
-    assert check_draft(out, evidence()) == []
+@pytest.mark.parametrize("text", [
+    "Order o_9021 is refund_pending and the refund needs human approval.",
+    "You can ask for a refund through the portal.",
+    "Order o_9021 is refund_pending.",
+])
+def test_saying_a_refund_needs_approval_is_not_a_commitment(text):
+    assert check_draft(draft((text, [2])), evidence()) == []
 
 
 def test_a_contact_detail_the_evidence_does_not_hold_fails():

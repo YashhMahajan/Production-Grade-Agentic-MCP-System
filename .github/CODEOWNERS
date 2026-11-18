@@ -1,0 +1,5 @@
+# Changes to the pipeline, the database roles and the policy need the owner's review.
+/.github/            @YashhMahajan
+/deploy/sql/         @YashhMahajan
+/config/policy.yaml  @YashhMahajan
+/Dockerfile          @YashhMahajan

@@ -126,7 +126,7 @@ mcpvenv/bin/python scripts/bench_pipeline.py     # request overhead, backend fak
 
 The tests run the real server, middleware, policy file and tool registry in one process, with Redis, the embedding model and token validation replaced. The end-to-end tests in `tests/e2e` need the running stack and skip themselves otherwise.
 
-GitHub Actions runs four jobs on every push: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 41 end-to-end tests, a sample ingest and the benchmark, and dependency and image scans.
+GitHub Actions runs four jobs on every push, and a credential scan of the commits on every pull request: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 41 end-to-end tests, a sample ingest and the benchmark, and dependency and image scans.
 
 ## Before you put this in front of real data
 

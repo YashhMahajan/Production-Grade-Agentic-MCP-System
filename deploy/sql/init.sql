@@ -39,7 +39,7 @@ CREATE TABLE documents (
 );
 
 -- ── Row-level security ───────────────────────────────────────────────────
--- The MCP server runs `SET LOCAL app.tenant_id = $1` before every query;
+-- The MCP server runs `SET LOCAL app.tenant_id = '<tenant>'` before every query;
 -- the RLS policy below enforces that rows from other tenants are invisible
 -- regardless of what SQL the agent tries to run.
 
@@ -60,6 +60,11 @@ CREATE ROLE scout_app LOGIN PASSWORD 'scout_app'
     NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 GRANT USAGE ON SCHEMA public TO scout_app;
 GRANT SELECT ON customers, orders, documents TO scout_app;
+
+-- The tenant a query runs for is the `app.tenant_id` setting, and set_config() is the function that
+-- could point it at another tenant. The server sets it with SET LOCAL instead, which a SELECT cannot
+-- issue, so no role but a superuser needs set_config. PUBLIC has it by default; take it away.
+REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text, text, boolean) FROM PUBLIC;
 
 -- Used by `scout-mcp ingest` to write documents, and nothing else. The server never uses it.
 -- It has no BYPASSRLS: the policy below applies, so it can only write the tenant it sets.

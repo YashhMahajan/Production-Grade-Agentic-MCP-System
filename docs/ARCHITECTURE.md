@@ -87,7 +87,7 @@ The `investigate-customer` MCP prompt gives a client's own model the copilot's r
 
 The tenant is set once, from the token, and every backend enforces it separately:
 
-- Postgres: row-level security on `app.tenant_id`, set inside a read-only transaction. The app connects as `scout_app`, which cannot bypass it.
+- Postgres: row-level security on `app.tenant_id`, set with `SET LOCAL` inside a read-only transaction. The app connects as `scout_app`, which cannot bypass it and has no `EXECUTE` on `set_config`, the one function that could move the setting.
 - Elasticsearch: a mandatory `_tenant` filter wrapped around the caller's query.
 - Qdrant: a mandatory `tenant` match under the caller's filter.
 - S3: every key is prefixed with the tenant.

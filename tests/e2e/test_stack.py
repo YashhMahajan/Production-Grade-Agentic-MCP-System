@@ -233,12 +233,19 @@ def psql(user: str, password: str, sql: str) -> list[str]:
 def test_row_level_security_hides_rows_from_the_app_role():
     count = "SELECT count(*) FROM customers;"
     assert psql("scout_app", "scout_app", count) == ["0"]                  # no tenant set: nothing
-    acme = "BEGIN; SELECT set_config('app.tenant_id','acme',true); " + count + " COMMIT;"
+    acme = "BEGIN; SET LOCAL app.tenant_id = 'acme'; " + count + " COMMIT;"
     assert psql("scout_app", "scout_app", acme)[-1] == "2"
-    globex = "BEGIN; SELECT set_config('app.tenant_id','globex',true); " + count + " COMMIT;"
+    globex = "BEGIN; SET LOCAL app.tenant_id = 'globex'; " + count + " COMMIT;"
     assert psql("scout_app", "scout_app", globex)[-1] == "1"
     # The compose superuser bypasses RLS entirely, which is why the server must not use it.
     assert psql("scout", "scout", count) == ["3"]
+
+
+def test_the_database_refuses_set_config_to_the_app_and_ingest_roles():
+    # Even a query that got past the server's SQL filter could not move the tenant with it.
+    for role in ("scout_app", "scout_ingest"):
+        out = psql(role, role, "SELECT set_config('app.tenant_id','globex',false);")
+        assert "permission denied for function set_config" in " ".join(out), (role, out)
 
 
 def test_database_roles_are_confined_to_their_own_database():
