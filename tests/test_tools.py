@@ -79,8 +79,8 @@ async def run_pg(rows, **kw):
 async def test_postgres_sets_tenant_inside_a_read_only_transaction():
     result, conn = await run_pg([{"id": 1}])
     assert conn.log[0] == ("begin", True)
-    # SET LOCAL cannot take a bind parameter; set_config can, and is transaction-local.
-    assert conn.log[1] == ("execute", "SELECT set_config('app.tenant_id', $1, true)", ("acme",))
+    # SET LOCAL is transaction-local and a SELECT cannot issue it; set_config is refused by the database.
+    assert conn.log[1] == ("execute", "SET LOCAL app.tenant_id = 'acme'", ())
     assert conn.log[2][0] == "cursor"
     assert result["row_count"] == 1
 

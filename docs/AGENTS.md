@@ -51,13 +51,14 @@ python scripts/bench_stack.py 200 10
 
 ## CI
 
-`.github/workflows/ci.yml`, four jobs on every push to `main` and `ship-ready` and on pull requests:
+`.github/workflows/ci.yml`, four jobs on every push to `main` and `ship-ready` and on pull requests, and a fifth, `secrets`, on pull requests only. The token is read-only (`permissions: contents: read`) and every action is pinned to a commit SHA:
 
 | Job | What it proves |
 |-----|----------------|
-| `test` | Lint, 360 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
+| `test` | Lint, 387 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
 | `validate-deploy` | Compose resolves, Prometheus rules parse and pass their unit tests, Caddyfile validates, realm and dashboard are valid JSON, Dockerfile lint |
-| `stack` | Image builds, every service gets healthy, demo data loads, a sample file is ingested for acme (and ingesting it again embeds nothing), 41 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
+| `stack` | Image builds, every service gets healthy, demo data loads, a sample file is ingested for acme (and ingesting it again embeds nothing), 42 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
+| `secrets` | `gitleaks` over the commits a pull request adds, with the development-only files in `.gitleaks.toml` allowed; fails on a credential |
 | `security` | `pip-audit` on dependencies, Trivy on the Dockerfile, and Trivy on the built image, which fails on any fixable HIGH or CRITICAL finding |
 
 To see why a run failed without waiting for the artifact: `gh run view <id> --log-failed`, or the job log through `gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`.

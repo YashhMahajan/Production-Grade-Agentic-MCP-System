@@ -1,0 +1,11 @@
+# The default rules, with the two places that hold development-only values on purpose:
+# the example environment file and the Keycloak realm imported by `docker compose`.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Development credentials that are in the repository by design"
+paths = [
+  '''^\.env\.example$''',
+  '''^deploy/keycloak/scout-realm\.json$''',
+]

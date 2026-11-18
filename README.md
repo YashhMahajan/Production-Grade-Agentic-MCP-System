@@ -96,7 +96,7 @@ Measured in CI on a shared 4-vCPU GitHub runner, three runs, through the TLS edg
 | Output-schema check on every call | no measurable cost: p50 1.87 ms before, 1.86 ms after, one run each |
 | `postgres.describe` through the edge, real Postgres, never cached | 5.0 ms at p50, 6.2 ms at p95 (one CI run, 200 calls) |
 | Ingesting the same file twice | 1 chunk embedded the first time, 0 the second, in CI |
-| Tests | 360 in-process, 41 end-to-end against the real stack (120 and 33 when I started the 0.5 work) |
+| Tests | 387 in-process, 42 end-to-end against the real stack (120 and 33 when I started the 0.5 work) |
 | Container image | 1.06 GB, 0 fixable HIGH or CRITICAL vulnerabilities (was 4) |
 | Python environment without PyTorch | 463 MB, down from 1.2 GB |
 
@@ -126,7 +126,7 @@ mcpvenv/bin/python scripts/bench_pipeline.py     # request overhead, backend fak
 
 The tests run the real server, middleware, policy file and tool registry in one process, with Redis, the embedding model and token validation replaced. The end-to-end tests in `tests/e2e` need the running stack and skip themselves otherwise.
 
-GitHub Actions runs four jobs on every push: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 41 end-to-end tests, a sample ingest and the benchmark, and dependency and image scans.
+GitHub Actions runs four jobs on every push, and a credential scan of the commits on every pull request: the fast tests, static validation of the deploy files (`promtool`, `caddy validate`, `hadolint`), the full stack with 42 end-to-end tests, a sample ingest and the benchmark, and dependency and image scans.
 
 ## Before you put this in front of real data
 

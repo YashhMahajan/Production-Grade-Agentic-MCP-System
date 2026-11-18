@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nothing here writes to the repository. A job that needs more asks for it itself.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,8 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
           cache: pip
@@ -38,7 +42,7 @@ jobs:
           for k in ("healthz_no_auth", "tool_call_cache_miss", "tool_call_cache_hit"):
               print(f"| {k} | {d[k]['p50']:.2f} | {d[k]['p95']:.2f} |")
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: bench-pipeline, path: bench-pipeline.json }
 
   # Static checks of everything in deploy/ that does not need a running stack.
@@ -46,7 +50,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: cp .env.example .env
       - name: Compose file resolves
         run: docker compose config --quiet
@@ -69,8 +73,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
           cache: pip
@@ -147,7 +151,7 @@ jobs:
             echo "::group::logs for $svc"; docker compose logs --no-color --tail 60 "$svc" || true; echo "::endgroup::"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: stack-results
@@ -166,8 +170,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with: { python-version: "3.11" }
       - name: Known vulnerabilities in Python dependencies
         run: |
@@ -217,3 +221,20 @@ jobs:
             echo "langgraph is in the server image"; exit 1
           fi
           docker run --rm --entrypoint python scout-mcp-copilot:scan -c "import langgraph, langchain_openai"
+
+  # Credentials have reached git history before. This looks at the commits a pull request adds.
+  secrets:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - name: No credentials in the commits this pull request adds
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+            zricethezav/gitleaks:v8.30.0 git /repo --config /repo/.gitleaks.toml \
+            --log-opts "origin/${BASE}..HEAD" --redact --exit-code 1

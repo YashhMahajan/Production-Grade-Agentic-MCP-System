@@ -155,8 +155,8 @@ class FakeConn:
 
     async def execute(self, sql, *args):
         self.log.append(("execute", sql, args))
-        if "set_config" in sql:
-            self.tenant = args[0]
+        if sql.startswith("SET app.tenant_id"):
+            self.tenant = sql.split("'")[1]
 
     async def fetchrow(self, sql, *args):
         self.log.append(("fetchrow", sql, args))
@@ -217,7 +217,7 @@ async def test_a_document_reaches_all_three_stores_tagged_with_its_tenant(lab):
     (conn,) = lab.conns
     kinds = [e[0] for e in conn.log]
     assert kinds == ["execute", "fetchrow", "close"]  # tenant is set before the row is written
-    assert conn.log[0][2] == ("acme",) and conn.log[1][2][:2] == ("doc_acme_refunds", "acme")
+    assert conn.log[0][1] == "SET app.tenant_id = 'acme'" and conn.log[1][2][:2] == ("doc_acme_refunds", "acme")
 
 
 async def test_the_text_that_is_embedded_carries_the_title(lab):
