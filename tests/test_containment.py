@@ -43,7 +43,8 @@ class Lab:
             monkeypatch.setattr(retriever, "_ALLOWED_TOOLS", frozenset(t.meta.name for t in self.app.server.registry))
         llm = ObedientLLM()
         async with ScoutMCPClient("http://test", token, transport=self.app.transport_) as mcp:
-            copilot = SupportCopilot(mcp, llm=llm, max_retriever_iterations=10)
+            copilot = SupportCopilot(mcp, llm=llm, max_retriever_iterations=10,
+                                    max_llm_calls=40)
             await copilot.answer(QUESTION)
         return llm
 

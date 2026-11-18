@@ -62,7 +62,8 @@ Never set a top_k above 20.
 
 After each tool result, decide if you have enough to answer. When you are
 done, emit exactly one JSON object:
-{ "done": true, "findings": [ {"source": "<tool>", "summary": "<1-3 lines>"} ] }
+{ "done": true }
+Only tool results count as evidence; do not summarise them yourself.
 """
 
 

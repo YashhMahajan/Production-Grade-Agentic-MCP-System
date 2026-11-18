@@ -55,7 +55,7 @@ python scripts/bench_stack.py 200 10
 
 | Job | What it proves |
 |-----|----------------|
-| `test` | Lint, 293 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
+| `test` | Lint, 313 tests, the policy cases (`scout-mcp policy test --strict`), request-overhead benchmark |
 | `validate-deploy` | Compose resolves, Prometheus rules parse and pass their unit tests, Caddyfile validates, realm and dashboard are valid JSON, Dockerfile lint |
 | `stack` | Image builds, every service gets healthy, demo data loads, a sample file is ingested for acme (and ingesting it again embeds nothing), 41 end-to-end tests pass, then the real-backend benchmark, a memory snapshot and the image size |
 | `security` | `pip-audit` on dependencies, Trivy on the Dockerfile, and Trivy on the built image, which fails on any fixable HIGH or CRITICAL finding |
@@ -77,13 +77,18 @@ Load policy.yaml at startup and fail if it is missing
 | Tools the retriever may call | `customer.build_context`, `semantic_search`, `hybrid_search`, `postgres.query`, `postgres.describe`, `elasticsearch.search`, `vector.search` | `agents/retriever.py` |
 | Retriever iterations | 6 | `agents/retriever.py` |
 | Critic revisions | 1 | `agents/orchestrator.py` |
+| Model calls per run | 6 (`SCOUT_AGENT_MAX_LLM_CALLS`), counting each JSON repair and each fallback attempt; the run stops with `call_budget` | `agents/base.py`, `agents/orchestrator.py` |
+| Model calls per day | 40 (`SCOUT_LLM_DAILY_LIMIT`), kept in `~/.scout/ledger.json` (mode 0600); when spent, `ask` prints the brief and exits 3 | `agents/ledger.py`, `agents/cli.py` |
 | Tokens per run | 60,000 (`SCOUT_AGENT_TOKEN_BUDGET`), checked before every model and tool call | `agents/base.py` |
 | Time per run | 90 s (`SCOUT_AGENT_TIMEOUT_S`); the time left goes to the server on every tool call | `agents/base.py`, `agents/mcp_client.py` |
 | A reply that is not JSON | one repair attempt, then the step fails (the critic's failure is a rejection) | `agents/base.py` |
 | Tool results | wrapped in `<tool_data id=...>`, cut to 6,000 characters in the conversation and 1,500 as a finding | `agents/mcp_client.py`, `agents/retriever.py` |
 | Citations | every `[S#]` must name a finding, checked in code | `agents/orchestrator.py` |
+| Evidence | only successful tool results become findings; a denial or error is listed, never cited; a finding the model writes itself is dropped | `agents/retriever.py` |
+| Redaction | emails, phone numbers and card-like numbers become placeholders before a prompt leaves and are restored in the reply; names and free text are not caught | `agents/redact.py` |
 | Customer id | must look like `CUST-1001`, else the copilot asks for one | `agents/planner.py` |
 | Writes | none; the allow-list has no write tool, and the server also enforces policy | both |
-| LLM models | primary `SCOUT_LLM_MODEL`, then `SCOUT_LLM_FALLBACK_MODEL` on any error or empty reply; both free on OpenRouter, same key | `agents/base.py` |
+| LLM models | primary `SCOUT_LLM_MODEL`, then `SCOUT_LLM_FALLBACK_MODEL` on an error or empty reply, but not on a 400-403 or a 429 that names a per-day cap; both free on OpenRouter, same key. With `SCOUT_ENV=production` a `:free` model is refused unless `SCOUT_ALLOW_FREE_LLM=1` | `agents/base.py`, `agents/cli.py` |
+| `brief` | no model call and no LLM key; fixed-rule flags only | `agents/brief.py` |
 
 The server's policy applies to the copilot like any client. The client-side allow-list is a second layer, not the only one.

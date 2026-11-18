@@ -31,7 +31,7 @@ DEFAULT_FALLBACK_MODEL = "inclusionai/ling-3.2-flash:free"
 
 
 class BudgetExceeded(Exception):
-    """The run used up its token budget or its time. ``reason`` says which."""
+    """The run used up its tokens, time or model calls. ``reason`` says which."""
 
     def __init__(self, reason: str):
         super().__init__(reason)
@@ -54,9 +54,22 @@ class AgentRun:
     tokens_in: int = 0
     tokens_out: int = 0
     tool_calls: int = 0
+    llm_calls: int = 0
     max_tokens: int | None = None
+    max_llm_calls: int | None = None
     timeout_s: float | None = None
     started: float = field(default_factory=time.monotonic)
+
+    def spend_call(self) -> None:
+        """Count one model call, or raise if the run may not make another.
+
+        A call is one request to a model host, so a JSON repair counts, and so does a
+        fallback attempt (``LLM.complete`` reports those through ``attempts``).
+        """
+        self.check()
+        if self.max_llm_calls is not None and self.llm_calls >= self.max_llm_calls:
+            raise BudgetExceeded("call_budget")
+        self.llm_calls += 1
 
     def check(self) -> None:
         if self.max_tokens is not None and self.tokens_in + self.tokens_out >= self.max_tokens:
@@ -103,7 +116,9 @@ class LLM:
             "X-Title": "Scout MCP",
         }
         last: Exception | None = None
+        attempt = 0
         for model in self.models:
+            attempt += 1
             body: dict[str, Any] = {
                 "model": model,
                 "max_tokens": max_tokens,
@@ -116,17 +131,27 @@ class LLM:
                     resp = await client.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
                     resp.raise_for_status()
                     data = resp.json()
+                data["attempts"] = attempt
                 if not _first_text_block(data) and not data.get("choices", [{}])[0].get("message", {}).get("tool_calls"):
                     raise ValueError("empty completion")
                 return data
             except Exception as e:
                 # Same key and request: another model would fail the same way, and each try costs a free-tier request.
-                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (400, 401, 402, 403):
+                if isinstance(e, httpx.HTTPStatusError) and (
+                    e.response.status_code in (400, 401, 402, 403) or _daily_cap(e.response)
+                ):
                     raise
                 log.warning("llm_fallback_triggered", failed_model=model, error=str(e))
                 last = e
         assert last is not None
         raise last
+
+
+def _daily_cap(resp: httpx.Response) -> bool:
+    """A 429 that says the free daily allowance is spent: every free model shares it, so do not retry."""
+    if resp.status_code != 429:
+        return False
+    return "per-day" in resp.text.lower()
 
 
 class Agent(ABC):
@@ -147,8 +172,9 @@ class Agent(ABC):
         self, run: AgentRun, messages: list[dict], max_tokens: int = 512, repair: bool = True
     ) -> dict:
         """Ask for a JSON object. One reply that is not JSON gets one repair attempt."""
-        run.check()
+        run.spend_call()
         resp = await self.llm.complete(self.system_prompt, messages, max_tokens=max_tokens)
+        run.llm_calls += max(resp.get("attempts", 1) - 1, 0)
         usage = resp.get("usage", {})
         run.tokens_in += usage.get("prompt_tokens", 0)
         run.tokens_out += usage.get("completion_tokens", 0)
@@ -171,8 +197,9 @@ class Agent(ABC):
     async def _complete_text(
         self, run: AgentRun, messages: list[dict], max_tokens: int = 512
     ) -> str:
-        run.check()
+        run.spend_call()
         resp = await self.llm.complete(self.system_prompt, messages, max_tokens=max_tokens)
+        run.llm_calls += max(resp.get("attempts", 1) - 1, 0)
         usage = resp.get("usage", {})
         run.tokens_in += usage.get("prompt_tokens", 0)
         run.tokens_out += usage.get("completion_tokens", 0)

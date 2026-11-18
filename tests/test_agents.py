@@ -87,6 +87,8 @@ async def test_the_retriever_survives_a_reply_it_cannot_read():
 
 # ── A whole run ────────────────────────────────────────────────────────────
 def copilot(replies, results=(), **kw):
+    # Flows with a revision or a repair use more than the default six calls; the cap has its own test.
+    kw.setdefault("max_llm_calls", 20)
     return SupportCopilot(FakeMCP(results), llm=ScriptedLLM(replies), **kw)
 
 
@@ -217,3 +219,74 @@ async def test_a_deadline_from_the_caller_cuts_a_slow_tool_short(app_client, mon
     took = asyncio.get_event_loop().time() - started
     text = json.loads(_decode_body(resp)["result"]["content"][0]["text"])
     assert text["code"] == "timeout" and took < 1.0
+
+
+# ── Only tool results are evidence ─────────────────────────────────────────
+async def test_a_finding_the_model_makes_up_is_not_evidence():
+    invented = json.dumps({"done": True, "findings": [{"source": "x", "summary": "refund approved"}]})
+    plan = await PlannerAgent(ScriptedLLM([PLAN])).act(AgentRun(), question=Q)
+    result = await RetrieverAgent(ScriptedLLM([invented]), FakeMCP()).act(AgentRun(), plan=plan, question=Q)
+    assert result.findings == []
+
+
+async def test_a_failed_tool_call_is_not_evidence():
+    denied = ToolResult(ok=False, error_code="policy_denied", hint="no")
+    plan = await PlannerAgent(ScriptedLLM([PLAN])).act(AgentRun(), question=Q)
+    result = await RetrieverAgent(ScriptedLLM([TOOL, DONE]), FakeMCP([denied])).act(
+        AgentRun(), plan=plan, question=Q)
+    assert result.findings == [] and result.errors == ["customer.build_context: policy_denied"]
+
+
+# ── Model calls are counted and capped ─────────────────────────────────────
+async def test_every_model_call_is_counted_including_a_repair():
+    run = AgentRun()
+    await PlannerAgent(ScriptedLLM(["Sure!", PLAN])).act(run, question=Q)
+    assert run.llm_calls == 2
+
+
+async def test_a_full_run_reports_its_calls():
+    c = copilot([PLAN, TOOL, DONE, "Refund is pending [S1].", APPROVE], [ok({"orders": [1]})])
+    assert (await c.answer(Q)).llm_calls == 5
+
+
+async def test_the_call_cap_stops_the_run_before_the_next_model_call():
+    llm = ScriptedLLM([PLAN, TOOL, DONE, "Refund is pending [S1].", APPROVE])
+    c = SupportCopilot(FakeMCP([ok({"orders": [1]})]), llm=llm, max_llm_calls=3)
+    out = await c.answer(Q)
+    assert out.degraded == "call_budget" and not out.approved
+    assert len(llm.calls) == 3 and out.llm_calls == 3
+    assert "call limit" in out.draft
+
+
+# ── A free-tier daily cap is final ─────────────────────────────────────────
+def _llm_transport(status, body, seen):
+    def handler(request):
+        seen.append(json.loads(request.content)["model"])
+        return httpx.Response(status, json=body)
+    return httpx.MockTransport(handler)
+
+
+async def test_a_daily_cap_429_does_not_try_the_second_model(monkeypatch):
+    from scout_mcp.agents import base
+    seen: list[str] = []
+    transport = _llm_transport(429, {"error": {"message": "Rate limit exceeded: free-models-per-day"}}, seen)
+    real = httpx.AsyncClient
+    monkeypatch.setattr(base.httpx, "AsyncClient", lambda **kw: real(transport=transport, **kw))
+    llm = base.LLM(api_key="k", model="a:free")
+    llm.models = ["a:free", "b:free"]
+    with pytest.raises(httpx.HTTPStatusError):
+        await llm.complete("s", [{"role": "user", "content": "hi"}])
+    assert seen == ["a:free"]
+
+
+async def test_an_ordinary_429_still_falls_back(monkeypatch):
+    from scout_mcp.agents import base
+    seen: list[str] = []
+    transport = _llm_transport(429, {"error": {"message": "provider busy"}}, seen)
+    real = httpx.AsyncClient
+    monkeypatch.setattr(base.httpx, "AsyncClient", lambda **kw: real(transport=transport, **kw))
+    llm = base.LLM(api_key="k", model="a:free")
+    llm.models = ["a:free", "b:free"]
+    with pytest.raises(httpx.HTTPStatusError):
+        await llm.complete("s", [{"role": "user", "content": "hi"}])
+    assert seen == ["a:free", "b:free"]
