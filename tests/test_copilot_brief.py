@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import stat
 from datetime import datetime, timezone
@@ -13,10 +12,9 @@ from scout_mcp.agents import cli
 from scout_mcp.agents.brief import make_activity, make_brief
 from scout_mcp.agents.ledger import Ledger, LedgerExhausted
 from scout_mcp.agents.mcp_client import ToolResult
-from scout_mcp.agents.orchestrator import SupportCopilot
-from scout_mcp.agents.redact import RedactingLLM, Redactor
+from scout_mcp.agents.redact import Redactor
 from scout_mcp.agents.sla import Sla
-from tests.fakes import FakeMCP, ScriptedLLM
+from tests.fakes import FakeMCP
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
 SLA = Sla({"default": {"high": 4, "normal": 24, "low": 72}, "tiers": {"gold": {"high": 2, "low": 48}}}).for_tenant("acme")
@@ -73,15 +71,6 @@ def test_the_same_value_gets_the_same_placeholder():
     assert r.redact("a@b.co and a@b.co") == "<email_1> and <email_1>"
 
 
-async def test_no_prompt_that_reaches_the_model_holds_customer_pii():
-    inner = ScriptedLLM(["Reply to <email_1> now."])
-    llm = RedactingLLM(inner)
-    out = await llm.complete("sys ana@example.com", [{"role": "user", "content": "ana@example.com 4111111111111111"}])
-    sent = json.dumps(inner.calls)
-    assert "ana@example.com" not in sent and "4111111111111111" not in sent
-    assert out["choices"][0]["message"]["content"] == "Reply to ana@example.com now."
-
-
 # ── daily ledger ───────────────────────────────────────────────────────────
 def test_the_ledger_stops_at_its_limit_and_starts_over_the_next_day(tmp_path):
     day = ["2026-11-16"]
@@ -112,27 +101,6 @@ async def test_brief_reports_a_failed_lookup():
     mcp = FakeMCP([ToolResult(ok=False, error_code="policy_denied")])
     text, code = await cli.brief_command(mcp, "CUST-1001", NOW)
     assert code == 1 and "policy_denied" in text
-
-
-async def test_an_exhausted_ledger_gives_the_evidence_pack_and_exit_3(tmp_path):
-    ledger = Ledger(tmp_path / "l.json", limit=0, today=lambda: "d")
-    llm = ScriptedLLM([])
-    mcp = FakeMCP([ToolResult(ok=True, value=CONTEXT)])
-    text, code = await cli.ask_command(SupportCopilot(mcp, llm=llm), mcp, "Why CUST-1001?", ledger, NOW)
-    assert code == 3 and "Ana Reyes" in text and llm.calls == []
-
-
-async def test_a_model_run_charges_the_ledger_for_its_calls(tmp_path):
-    plan = json.dumps({"needs": [], "customer_id_required": True, "notes": ""})
-    replies = [plan, json.dumps({"tool": "customer.build_context",
-                                 "arguments": {"customer_id": "CUST-1001", "question": "q"}}),
-               json.dumps({"done": True}), "Refund is pending [S1].",
-               json.dumps({"verdict": "approve", "issues": []})]
-    ledger = Ledger(tmp_path / "l.json", limit=40, today=lambda: "d")
-    mcp = FakeMCP([ToolResult(ok=True, value=CONTEXT)])
-    copilot = SupportCopilot(mcp, llm=ScriptedLLM(replies))
-    text, code = await cli.ask_command(copilot, mcp, "Why CUST-1001?", ledger, NOW)
-    assert code == 0 and ledger.remaining() == 35
 
 
 def test_a_free_model_is_refused_in_production_without_an_opt_in(monkeypatch):

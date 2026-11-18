@@ -14,11 +14,14 @@ attempt is counted.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Sequence
 from typing import Any
 
-from scout_mcp.agents.base import DEFAULT_FALLBACK_MODEL, DEFAULT_MODEL
+# Both are free on OpenRouter with JSON mode, from different upstream providers.
+DEFAULT_MODEL = "google/gemma-4-31b-it:free"
+DEFAULT_FALLBACK_MODEL = "inclusionai/ling-3.2-flash:free"
 
 
 class FinalLLMError(Exception):
@@ -41,6 +44,17 @@ def classify(exc: Exception) -> str:
     if status == 429 and "per-day" in f"{exc} {getattr(exc, 'body', '')}".lower():
         return "final"
     return "transient"
+
+
+def parse_json_lenient(text: str) -> dict:
+    """The JSON object in a model's reply, even with a code fence or stray prose around it."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1].removeprefix("json\n")
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError(f"no JSON object in the reply: {text[:200]!r}")
+    return json.loads(text[start:end + 1])
 
 
 def reply_text(message: Any) -> str:

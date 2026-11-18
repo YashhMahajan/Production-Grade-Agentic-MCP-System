@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from scout_mcp.agents.planner import PlannerAgent
+from scout_mcp.agents.ids import extract_customer_id
 from scout_mcp.auth.policy import PolicyEngine
 from scout_mcp.tools.atomic import embeddings
 from scout_mcp.tools.atomic.postgres import PostgresQueryInput, PostgresQueryTool
@@ -180,12 +180,12 @@ async def test_vector_tool_exposes_doc_id(monkeypatch):
     assert [m["doc_id"] for m in out["matches"]] == ["doc_a", 7]
 
 
-# ── Planner ───────────────────────────────────────────────────────────────
+# ── Customer ids ──────────────────────────────────────────────────────────
 @pytest.mark.parametrize("text,expected", [
     ("Why was the refund on order o_9002 for CUST-1001 delayed?", "CUST-1001"),
     ("cust_77 asked about shipping", "CUST_77"),
     ("customers are angry about accounting", None),
     ("no id here", None),
 ])
-def test_planner_extracts_the_full_customer_id(text, expected):
-    assert PlannerAgent._extract_customer_id(text) == expected
+def test_the_full_customer_id_is_extracted(text, expected):
+    assert extract_customer_id(text) == expected
