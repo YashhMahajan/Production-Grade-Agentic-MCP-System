@@ -140,6 +140,20 @@ async def test_customer_context_joins_all_four_backends(acme):
     assert ctx["docs"][0]["id"] == "doc_refund_policy"                    # Qdrant, bge-base
 
 
+async def test_activity_since_reads_new_orders_and_tickets_from_both_stores(acme, globex):
+    ask = {"customer_id": "CUST-1001", "since": "2000-01-01T00:00:00Z"}
+    everything = value(await acme.call_tool("customer.activity_since", ask))
+    assert "partial_errors" not in everything, everything.get("partial_errors")
+    assert {o["id"] for o in everything["orders"]} >= {"o_9001", "o_9002"}   # Postgres
+    assert [t["id"] for t in everything["tickets"]] == ["t_5001"]            # Elasticsearch
+    after_the_ticket = value(await acme.call_tool("customer.activity_since", {**ask, "since": "2026-05-13T00:00:00Z"}))
+    assert after_the_ticket["tickets"] == []                                 # t_5001 was opened 2026-05-12
+    future = value(await acme.call_tool("customer.activity_since", {**ask, "since": "2100-01-01T00:00:00Z"}))
+    assert future["orders"] == [] and future["tickets"] == []
+    other_tenant = value(await globex.call_tool("customer.activity_since", ask))
+    assert other_tenant["orders"] == [] and other_tenant["tickets"] == []    # RLS and the tenant filter
+
+
 async def test_hybrid_search_fuses_elasticsearch_and_qdrant(acme):
     out = value(await acme.call_tool("hybrid_search", {
         "query": "refund business days", "es_index": "documents",

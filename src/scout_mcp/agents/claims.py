@@ -15,8 +15,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from scout_mcp.agents.brief import _age_days
 from scout_mcp.agents.redact import _PATTERNS
+from scout_mcp.agents.sla import TenantSla, age_hours
 
 MAX_WORDS = 180
 
@@ -52,7 +52,7 @@ class Evidence:
     text: str
 
 
-def build_evidence(context: dict, now: datetime) -> list[Evidence]:
+def build_evidence(context: dict, now: datetime, sla: TenantSla | None = None) -> list[Evidence]:
     """Number the facts in a ``customer.build_context`` result as S1, S2, ... in a fixed order."""
     items: list[tuple[str, str]] = []
     profile = context.get("profile") or {}
@@ -64,10 +64,12 @@ def build_evidence(context: dict, now: datetime) -> list[Evidence]:
         items.append(("order", f"Order {o['id']}: status {o['status']}, total "
                                f"{o['total_cents'] / 100:.2f} {o['currency']}, placed {o['created_at'][:10]}"))
     for t in context.get("tickets") or []:
-        age = _age_days(t.get("created_at"), now)
-        opened = f", opened {t['created_at'][:10]} ({age} days ago)" if age is not None else ""
+        hours = age_hours(t.get("created_at"), now)
+        opened = f", opened {t['created_at'][:10]} ({int(hours // 24)} days ago)" if hours is not None else ""
+        status = sla.status(t, profile.get("tier"), now) if sla else None
+        target = f", {status.describe()}" if status else ""
         items.append(("ticket", f"Ticket {t['id']}: {t.get('priority') or 'unknown'} priority, "
-                                f"{t.get('status') or 'unknown'}{opened}, subject: {t.get('subject') or ''}"))
+                                f"{t.get('status') or 'unknown'}{opened}{target}, subject: {t.get('subject') or ''}"))
     for d in context.get("docs") or []:
         body = (d.get("body") or d.get("preview") or "")[:300]
         items.append(("document", f"Document {d.get('title') or d.get('id')}: {body}"))

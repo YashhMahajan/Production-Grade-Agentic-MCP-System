@@ -93,6 +93,8 @@ Load policy.yaml at startup and fail if it is missing
 | Draft calls per run | 3 (`SCOUT_DRAFT_MAX_LLM_CALLS`) counting the repair, the revision and each fallback attempt; no attempt starts past it | `agents/graphs/draft.py`, `agents/llm.py` |
 | Draft checks | every claim cites existing evidence; numbers, dates, amounts and contact details appear in the cited evidence; no commitment phrase; at most 180 words; one revision, then the draft is flagged | `agents/claims.py` |
 | Draft tools | one fixed `customer.build_context` call; the model chooses no tool, so a poisoned ticket cannot cause a call | `agents/graphs/draft.py` |
+| SLA flags | targets from `config/sla.yaml` (`SCOUT_SLA_FILE`): nearing at 75% of the target, past beyond it; open and pending tickets only; no target means no flag | `agents/sla.py` |
+| `activity` | one `customer.activity_since` call and no model; creation times only | `agents/cli.py` |
 | `brief` | no model call and no LLM key; fixed-rule flags only | `agents/brief.py` |
 
 The server's policy applies to the copilot like any client. The client-side allow-list is a second layer, not the only one.

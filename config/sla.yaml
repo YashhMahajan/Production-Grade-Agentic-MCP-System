@@ -1,0 +1,13 @@
+# How many hours an open or pending ticket may wait before the copilot flags it, by priority.
+# The most specific entry wins: the tenant's tier, the tenant's default, the tier, then `default`.
+# A priority missing from every layer has no target and is never flagged.
+default: { high: 4, normal: 24, low: 72 }
+
+tiers:
+  gold: { high: 2, normal: 12, low: 48 }
+
+# tenants:
+#   acme:
+#     default: { low: 48 }
+#     tiers: { platinum: { high: 1 } }
+tenants: {}

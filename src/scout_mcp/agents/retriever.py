@@ -33,6 +33,7 @@ from scout_mcp.agents.prompts import RETRIEVER_SYSTEM
 # policy engine — belt and suspenders.
 _ALLOWED_TOOLS = frozenset({
     "customer.build_context",
+    "customer.activity_since",
     "semantic_search",
     "hybrid_search",
     "postgres.query",

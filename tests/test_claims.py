@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from scout_mcp.agents.claims import Claim, DraftOut, assemble, build_evidence, check_draft
+from scout_mcp.agents.sla import Sla
 from scout_mcp.agents.llm import CallBudget, FinalLLMError, LLMUnavailable, classify, invoke_models
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
@@ -35,6 +36,13 @@ def test_evidence_is_numbered_in_a_fixed_order_with_ticket_age():
     assert [e.id for e in ev] == [1, 2, 3]
     assert [e.kind for e in ev] == ["profile", "order", "ticket"]
     assert "49.99 USD" in ev[1].text and "6 days ago" in ev[2].text
+
+
+def test_a_ticket_line_states_its_sla_when_there_is_one():
+    sla = Sla({"default": {"high": 4}, "tiers": {"gold": {"high": 2}}}).for_tenant("acme")
+    ticket = build_evidence(CONTEXT, NOW, sla)[2].text
+    assert "SLA target 2h, breached (147h open)" in ticket
+    assert "SLA" not in evidence()[2].text
 
 
 def test_a_context_with_nothing_in_it_has_no_evidence():

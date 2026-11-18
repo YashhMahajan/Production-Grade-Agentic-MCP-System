@@ -8,10 +8,9 @@ any quota.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 
-# An open or pending ticket this many days old is flagged. The per-tenant SLA rules replace this later.
-STALE_DAYS = 3
+from scout_mcp.agents.sla import TenantSla, age_hours
 
 
 @dataclass
@@ -20,19 +19,7 @@ class Brief:
     flags: list[str] = field(default_factory=list)
 
 
-def _age_days(created_at: str | None, now: datetime) -> int | None:
-    if not created_at:
-        return None
-    try:
-        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    return max((now - created).days, 0)
-
-
-def make_brief(context: dict, now: datetime) -> Brief:
+def make_brief(context: dict, now: datetime, sla: TenantSla | None = None) -> Brief:
     profile = context.get("profile") or {}
     orders = context.get("orders") or []
     tickets = context.get("tickets") or []
@@ -53,14 +40,15 @@ def make_brief(context: dict, now: datetime) -> Brief:
     lines.append("")
     lines.append("Open tickets")
     for t in tickets:
-        age = _age_days(t.get("created_at"), now)
-        age_text = f"{age} days" if age is not None else "age unknown"
+        hours = age_hours(t.get("created_at"), now)
+        age_text = f"{int(hours // 24)} days" if hours is not None else "age unknown"
         lines.append(f"  {t['id']}  {t.get('priority') or '-'}  {t.get('status') or '-'}  "
                      f"{age_text}  {t.get('subject') or ''}")
         if t.get("priority") == "high":
             flags.append(f"open high-priority ticket {t['id']}")
-        if age is not None and age >= STALE_DAYS:
-            flags.append(f"ticket {t['id']} is {age} days old")
+        status = sla.status(t, profile.get("tier"), now) if sla else None
+        if status and status.state != "ok":
+            flags.append(f"ticket {t['id']}: {status.describe()}")
     if not tickets:
         lines.append("  none")
 
@@ -75,3 +63,21 @@ def make_brief(context: dict, now: datetime) -> Brief:
         lines.append("Flags")
         lines.extend(f"  - {f}" for f in flags)
     return Brief(text="\n".join(lines), flags=flags)
+
+
+def make_activity(value: dict) -> str:
+    """What ``customer.activity_since`` returned, as text."""
+    lines = [f"New for {value['customer_id']} since {value['since']}", "", "Orders"]
+    for o in value.get("orders") or []:
+        lines.append(f"  {o['id']}  {o['status']}  {o['total_cents'] / 100:.2f} {o['currency']}  {o['created_at'][:10]}")
+    if not value.get("orders"):
+        lines.append("  none")
+    lines += ["", "Tickets"]
+    for t in value.get("tickets") or []:
+        lines.append(f"  {t['id']}  {t.get('priority') or '-'}  {t.get('status') or '-'}  "
+                     f"{(t.get('created_at') or '')[:10]}  {t.get('subject') or ''}")
+    if not value.get("tickets"):
+        lines.append("  none")
+    for part, why in (value.get("partial_errors") or {}).items():
+        lines.append(f"\nincomplete: {part} ({why})")
+    return "\n".join(lines)
