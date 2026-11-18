@@ -42,6 +42,7 @@ SAMPLES: dict[str, dict] = {
                      "created_at": "2026-02-02T00:00:00Z"}],
         "docs": [{"id": "DOC-1", "score": 0.9, "preview": "Refunds take 5 days", "metadata": {}}],
     },
+    "ticket.escalate": {"ticket_id": "t_5002", "priority": "high", "escalated_at": "2026-11-18T10:00:00+00:00"},
     "customer.activity_since": {
         "customer_id": "CUST-1001", "since": "2026-02-01T00:00:00+00:00",
         "orders": [{"id": "ORD-2", "status": "shipped", "total_cents": 1250, "currency": "USD",

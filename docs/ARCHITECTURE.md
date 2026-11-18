@@ -48,7 +48,7 @@ People sign in through `scout-human`, a public client that uses the authorizatio
 
 ## Approvals
 
-`s3.put_object` is destructive. The first call returns `pending_approval` with an id. A reviewer reads `GET /approvals/{id}` to see the exact arguments, then calls `POST /approvals/{id}/approve` or `/deny`. The agent then repeats the call with `approval_id`; it runs only if the tool and arguments match what was approved, and the approval is deleted afterwards.
+`s3.put_object` and `ticket.escalate` are destructive. The first call returns `pending_approval` with an id. A reviewer reads `GET /approvals/{id}` to see the exact arguments, then calls `POST /approvals/{id}/approve` or `/deny`. The agent then repeats the call with `approval_id`; it runs only if the tool and arguments match what was approved, and the approval is deleted afterwards.
 
 Reviewing takes the `approval:review` scope **and** `role:reviewer`. The scope is something a client can request; the role comes from the identity provider's record of the person, so a sign-in client that offers the scope to everyone does not make everyone a reviewer. The identities on the request (caller and delegator) and on the decision (subject and delegator) may not overlap, so neither the agent nor the human it acts for can approve it. Another tenant's reviewer is refused, and a decision cannot be changed.
 
@@ -64,6 +64,7 @@ Reviewing takes the `approval:review` scope **and** `role:reviewer`. The scope i
 | Atomic | `vector.search` | `tool:vector:read` | 300 s |
 | Atomic | `s3.get_object` | `tool:s3:read` | 300 s |
 | Atomic | `s3.put_object` (destructive) | `tool:s3:write` | none |
+| Atomic | `ticket.escalate` (destructive) | `tool:tickets:escalate` | none |
 | Atomic | `http.fetch` | `tool:http:fetch` | none |
 | Composed | `semantic_search` | vector + postgres read | 120 s |
 | Composed | `hybrid_search` | vector + elasticsearch read | 120 s |
@@ -116,6 +117,8 @@ I used LangGraph only to connect steps. Each step is a small function over a run
 What the code checks, so a second model does not have to: every claim cites evidence that exists, every number, date, amount and contact detail in a claim appears in the evidence it cites, no claim commits the company to an outcome ("we will refund"), and the draft is at most 180 words. I dropped the model critic on this path because a model checking a model costs a call from a small daily allowance and is itself unreliable on a free tier.
 
 Chat models are `ChatOpenAI` pointed at OpenRouter with `max_retries=0`. The fallback loop is mine (`agents/llm.py`) instead of `with_fallbacks`, because what follows a failure decides how much of the allowance is spent: a 400 to 403, or a 429 that names a per-day cap, is final, since every free model shares it; a 5xx, a timeout, a per-provider 429 or an empty reply tries the second model. Every attempt is counted, and no attempt starts once the run's cap (default 3, `SCOUT_DRAFT_MAX_LLM_CALLS`) is reached. I ask for JSON in the prompt and validate it with Pydantic, with one counted repair, instead of `with_structured_output`, because free hosts differ in which structured modes they support.
+
+`scout-copilot escalate TICKET "reason"` is the one write the copilot can ask for, and it makes no model call. `ticket.escalate` raises a ticket to high priority and records when and why; the server holds every call for a reviewer. The command is a LangGraph graph (`agents/graphs/escalate.py`) because LangGraph has a real pause: the graph reads the ticket, shows the person the ticket and the reason, and stops at `interrupt` until they answer (`--yes` skips the question). A "no" sends nothing. A "yes" makes the call, and the result is a pending approval, never a change, because the copilot has no `approval:review` scope. After a reviewer approves it, the same command with `--approval ID` makes the approved call, which runs once. I kept the write out of `ask` and `draft` on purpose: their allow-lists name only read tools, a test checks that no tool in the registry that writes is on them, and the containment tests show that a poisoned question which names `ticket.escalate` is refused in code, refused by the server for a token without the scope, and held for a human for a token with it.
 
 I did not use `langchain-mcp-adapters` to load Scout's tools. Its repository is [archived](https://github.com/langchain-ai/langchain-mcp-adapters) and its last release, [0.3.2](https://pypi.org/project/langchain-mcp-adapters/), requires `mcp<2.0.0`, while this project needs `mcp>=2.3`. The draft path calls one fixed tool anyway, and it goes through `ScoutMCPClient`, which keeps the deadline header, the rate-limit wait and the `<tool_data>` marking under tests of mine.
 

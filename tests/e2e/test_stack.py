@@ -63,7 +63,7 @@ def test_edge_forwards_only_public_paths_and_sets_security_headers(http):
         assert http.get(f"{MCP_URL}{path}").status_code == 404, path
     doc = http.get(f"{MCP_URL}/.well-known/mcp-server").json()
     assert doc["authorization_server"]["issuer"] == "http://keycloak:8080/realms/scout"
-    assert len(doc["tools_summary"]) == 11
+    assert len(doc["tools_summary"]) == 12
 
 
 def test_a_browser_origin_is_refused_at_the_edge(http):
@@ -305,6 +305,38 @@ async def test_destructive_call_waits_for_a_human_then_runs_once():
                         "import boto3,os;c=boto3.client('s3',endpoint_url=os.environ['SCOUT_S3_ENDPOINT']);"
                         "print(c.head_object(Bucket='scout-mcp-data',Key='acme/attachments/e2e.txt')['ContentLength'])")
     assert head.strip().splitlines()[-1] == str(len(args["content"]))   # stored under the tenant prefix
+
+
+async def test_a_copilot_escalation_waits_for_a_reviewer_then_changes_the_ticket_once(acme):
+    args = {"ticket_id": "t_5002", "reason": "e2e: past its SLA and the customer wrote twice"}
+
+    async def ticket(size):  # a different size is a different cache key, so each read is fresh
+        out = value(await acme.call_tool("elasticsearch.search", {
+            "index": "tickets", "query": {"ids": {"values": ["t_5002"]}}, "size": size}))
+        return out["hits"][0]["source"]
+
+    assert (await ticket(1))["priority"] == "normal"
+    pending = await acme.call_tool("ticket.escalate", args)
+    assert not pending.ok and pending.error_code == "pending_approval"
+    approval_id = pending.context["approval_id"]
+    assert (await ticket(2))["priority"] == "normal"                      # nothing changes while it waits
+
+    reviewer_token, copilot_token = await token("reviewer-acme"), await token("copilot-acme")
+    with httpx.Client(verify=False, headers={"Authorization": f"Bearer {reviewer_token}",
+                                              "X-Tenant-Id": "acme"}) as reviewer:
+        shown = reviewer.get(f"{MCP_URL}/approvals/{approval_id}").json()
+        assert shown["tool"] == "ticket.escalate" and shown["arguments"] == args
+        denied = httpx.post(f"{MCP_URL}/approvals/{approval_id}/approve", verify=False,
+                            headers={"Authorization": f"Bearer {copilot_token}"})
+        assert denied.status_code == 403                                  # the copilot cannot approve its own request
+        assert reviewer.post(f"{MCP_URL}/approvals/{approval_id}/approve").json()["state"] == "approved"
+
+    ran = await acme.call_tool("ticket.escalate", {**args, "approval_id": approval_id})
+    assert ran.ok and ran.value["priority"] == "high"
+    after = await ticket(3)
+    assert after["priority"] == "high" and after["escalated_reason"] == args["reason"] and after["escalated_at"]
+    replay = await acme.call_tool("ticket.escalate", {**args, "approval_id": approval_id})
+    assert not replay.ok and replay.error_code == "approval_already_used"
 
 
 # ── Observability ─────────────────────────────────────────────────────────

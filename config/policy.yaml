@@ -25,6 +25,12 @@ rules:
     actions: ["tool:postgres:read"]
     resources: ["tenant:*/analytics/*"]
 
+  # ── Escalating a ticket: a write, so the server also holds every call for approval ──
+  - id: support-agents-can-escalate-tickets
+    subjects: ["role:support_copilot", "role:human_agent"]
+    actions: ["tool:tickets:escalate"]
+    resources: ["tenant:*/tickets/*"]
+
   # ── Outbound HTTP: tightly scoped allow list ───────────────────────────
   - id: support-agents-can-fetch-docs
     subjects: ["role:support_copilot"]

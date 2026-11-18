@@ -26,7 +26,8 @@ _CLAIM = {"access.token.claim": "true", "id.token.claim": "false", "userinfo.tok
 # kind -> what it is, the role its tokens carry, and the scopes it is given.
 KINDS: dict[str, dict] = {
     "copilot": {"description": "Support copilot agent for tenant {tenant}", "role": "role:support_copilot",
-                "scopes": ["tool:postgres:read", "tool:elasticsearch:read", "tool:vector:read", "tool:s3:read"]},
+                "scopes": ["tool:postgres:read", "tool:elasticsearch:read", "tool:vector:read", "tool:s3:read",
+                           "tool:tickets:escalate"]},
     "writer": {"description": "Agent that proposes attachment uploads (needs approval)", "role": "role:human_agent",
                "scopes": ["tool:s3:read", "tool:s3:write"]},
     "reviewer": {"description": "Human reviewer's service identity for approving pending calls",

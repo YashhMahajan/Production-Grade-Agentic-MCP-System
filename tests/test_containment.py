@@ -28,6 +28,7 @@ from scout_mcp.agents.mcp_client import ScoutMCPClient  # noqa: E402
 from scout_mcp.tools.atomic import http_client  # noqa: E402
 from scout_mcp.tools.atomic.postgres import PostgresQueryTool  # noqa: E402
 from scout_mcp.tools.atomic.s3_storage import S3PutTool  # noqa: E402
+from scout_mcp.tools.atomic.ticket_escalate import TicketEscalateTool  # noqa: E402
 from scout_mcp.tools.workflow.customer_context import CustomerContextTool  # noqa: E402
 from tests.fakes import ADVERSARIAL_TICKET, HOSTILE_QUESTION  # noqa: E402
 from tests.fakes_lc import ObedientChat  # noqa: E402
@@ -89,7 +90,7 @@ def lab(app_client, monkeypatch):
             return {}
         monkeypatch.setattr(cls, "run", run)
 
-    for cls in (S3PutTool, PostgresQueryTool):
+    for cls in (S3PutTool, PostgresQueryTool, TicketEscalateTool):
         spy(cls)
 
     async def reached_network(host):
@@ -104,7 +105,7 @@ def lab(app_client, monkeypatch):
 # ── Instructions in data: the step that reads it has no tools ──────────────
 async def test_an_instruction_in_a_ticket_reaches_the_model_and_causes_no_call(lab, monkeypatch):
     result = await lab.attack("support", allow_every_tool=True, monkeypatch=monkeypatch, question=BENIGN_QUESTION)
-    assert len(lab.chat.seen_in_data) == 5  # the attack did arrive, in the evidence the model read
+    assert len(lab.chat.seen_in_data) == 6  # the attack did arrive, in the evidence the model read
     assert lab.calls() == [("customer.build_context", None)]  # and the only call is the honest lookup
     assert result.outcome == "approved" and result.tool_calls == 1
     assert lab.executed == [] and lab.network == [] and lab.approvals() == []
@@ -120,9 +121,10 @@ async def test_through_the_copilot_the_write_and_the_fetches_never_leave_the_pro
         ("customer.build_context", None),
         ("postgres.query", "invalid_arguments"),
     ]
-    # The write and both fetches never left the process; the server's refusal of the query is recorded too.
+    # The writes and both fetches never left the process; the server's refusal of the query is recorded too.
     assert result.errors == ["s3.put_object: tool_not_allowed", "http.fetch: tool_not_allowed",
-                             "http.fetch: tool_not_allowed", "postgres.query: invalid_arguments"]
+                             "http.fetch: tool_not_allowed", "ticket.escalate: tool_not_allowed",
+                             "postgres.query: invalid_arguments"]
     assert lab.executed == [] and lab.network == [] and lab.approvals() == []
 
 
@@ -136,6 +138,7 @@ async def test_a_copilot_token_cannot_write_fetch_or_query_past_its_scopes(lab, 
         ("http.fetch", "missing_scope"),
         ("postgres.query", "invalid_arguments"),   # set_config is refused before any scope check
         ("s3.put_object", "missing_scope"),
+        ("ticket.escalate", "missing_scope"),
     ]
     assert lab.executed == [] and lab.network == [] and lab.approvals() == []
 
@@ -165,3 +168,12 @@ async def test_a_write_the_token_is_allowed_to_make_is_still_held_for_approval(l
     assert ("s3.put_object", "pending_approval") in lab.calls()
     assert [a["tool"] for a in lab.approvals()] == ["s3.put_object"]
     assert lab.executed == []  # nothing was written
+
+
+async def test_an_escalation_the_token_may_propose_waits_for_a_human_and_does_not_run(lab, monkeypatch):
+    await lab.attack("copilot_escalate", allow_every_tool=True, monkeypatch=monkeypatch)
+    assert ("ticket.escalate", "pending_approval") in lab.calls()
+    held = lab.approvals()
+    assert [a["tool"] for a in held] == ["ticket.escalate"] and held[0]["state"] == "pending"
+    assert held[0]["arguments"]["ticket_id"] == "t_5002"
+    assert lab.executed == []  # nothing was changed; a person has to approve it, and the copilot cannot

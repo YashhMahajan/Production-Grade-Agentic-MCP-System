@@ -41,7 +41,7 @@ Realm clients: `copilot-acme`, `copilot-globex` (read scopes), `writer-acme` (`s
 
 | Index | Fields | Notes |
 |-------|--------|-------|
-| `tickets` | `customer_id` (keyword), `status` (keyword), `priority` (keyword), `subject` (text), `created_at` (date), `_tenant` (keyword) | `status` is `open` or `pending` in the seed data |
+| `tickets` | `customer_id` (keyword), `status` (keyword), `priority` (keyword), `subject` (text), `created_at` (date), `_tenant` (keyword) | `status` is `open` or `pending` in the seed data. `ticket.escalate` adds `escalated_at` (date) and `escalated_reason` (text) and sets `priority` to `high` |
 | `documents` | `title` (text), `body` (text), `_tenant` (keyword), `_sha` (keyword) | mirror of the Postgres `documents` rows, `_id` is the document id. `_sha` is the hash of the content ingest last wrote, and is written last |
 | `scout_meta` | `model`, `dim` | one document per collection, `embedding-<collection>`: which model embedded it |
 

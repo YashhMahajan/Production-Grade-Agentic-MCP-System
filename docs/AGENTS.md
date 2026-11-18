@@ -90,7 +90,8 @@ Load policy.yaml at startup and fail if it is missing
 | Tool results | wrapped in `<tool_data id=...>` with an id that is new every call, so the data cannot close the block | `agents/mcp_client.py` |
 | Redaction | emails, phone numbers and card-like numbers become placeholders before a prompt leaves and are restored in the reply; names and free text are not caught | `agents/redact.py` |
 | Customer id | must look like `CUST-1001`; `draft` and `activity` refuse without one, `ask` continues without a customer | `agents/ids.py` |
-| Writes | none; the allow-list has no write tool, and the server also enforces policy | both |
+| Writes | one: `ticket.escalate`, which only the `escalate` command may call, as a request the server holds for a reviewer; the copilot has no `approval:review` scope and no approve path. The allow-lists of `ask` and `draft` have no write tool, and a test checks every tool in the registry against them | `agents/graphs/escalate.py`, `agents/graphs/ask.py`, `tools/atomic/ticket_escalate.py` |
+| `escalate` | no model call; shows the ticket and reason and waits for a yes (`--yes` skips the question); a no sends nothing; after approval, `--approval ID` makes the approved call once | `agents/graphs/escalate.py`, `agents/cli.py` |
 | LLM models | primary `SCOUT_LLM_MODEL`, then `SCOUT_LLM_FALLBACK_MODEL` on an error or empty reply, but not on a 400-403 or a 429 that names a per-day cap; both free on OpenRouter, same key. With `SCOUT_ENV=production` a `:free` model is refused unless `SCOUT_ALLOW_FREE_LLM=1` | `agents/llm.py`, `agents/cli.py` |
 | SLA flags | targets from `config/sla.yaml` (`SCOUT_SLA_FILE`): nearing at 75% of the target, past beyond it; open and pending tickets only; no target means no flag | `agents/sla.py` |
 | `activity` | one `customer.activity_since` call and no model; creation times only | `agents/cli.py` |
