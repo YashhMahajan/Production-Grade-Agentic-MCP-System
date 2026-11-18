@@ -4,7 +4,7 @@
 # then a slim runtime that only carries what is needed to serve.
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.15-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
@@ -24,7 +24,7 @@ RUN pip install --upgrade pip build && \
     pip wheel --wheel-dir /wheels ".${EXTRAS}"
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.15-slim
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
     SCOUT_TRANSPORT=http SCOUT_HTTP_HOST=0.0.0.0 SCOUT_HTTP_PORT=8080 \
