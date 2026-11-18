@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from pathlib import Path
 
 import httpx
@@ -27,6 +28,24 @@ from scout_mcp.server import ScoutServer, build_http_app
 
 ROOT = Path(__file__).resolve().parent.parent
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+
+
+# Hosts no test may reach. A push never calls a model and never sends a trace.
+_NEVER_FROM_A_TEST = ("openrouter.ai", "smith.langchain.com")
+
+
+@pytest.fixture(autouse=True)
+def no_model_or_tracing_host(monkeypatch):
+    """Refuse to resolve the model host or LangSmith, so a test that forgot to fake them fails loudly."""
+    real = socket.getaddrinfo
+
+    def guarded(host, *args, **kwargs):
+        name = str(host).lower().rstrip(".")
+        if any(name == h or name.endswith("." + h) for h in _NEVER_FROM_A_TEST):
+            raise AssertionError(f"a test tried to reach {host}: tests never call a model or LangSmith")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded)
 
 
 @pytest.fixture

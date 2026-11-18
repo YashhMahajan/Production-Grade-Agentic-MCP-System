@@ -129,6 +129,6 @@ def _front(run: DraftRun, limit: int):
 
 async def run_ask(mcp, models: list, question: str, now: datetime, max_llm_calls: int = 6,
                   timeout_s: float | None = None, sla: TenantSla | None = None,
-                  max_tool_calls: int = MAX_TOOL_CALLS) -> DraftResult:
+                  max_tool_calls: int = MAX_TOOL_CALLS, trace: dict | None = None) -> DraftResult:
     run = DraftRun(mcp=mcp, models=models, now=now, max_llm_calls=max_llm_calls, timeout_s=timeout_s, sla=sla)
-    return await execute(run, _front(run, max_tool_calls), extract_customer_id(question) or "", question)
+    return await execute(run, _front(run, max_tool_calls), extract_customer_id(question) or "", question, trace)

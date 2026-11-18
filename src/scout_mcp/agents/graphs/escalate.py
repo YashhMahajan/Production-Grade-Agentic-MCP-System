@@ -90,10 +90,10 @@ def build_escalate_graph(mcp):
 
 
 async def run_escalate(mcp, ticket_id: str, reason: str, confirm: Callable[[str], Awaitable[bool]],
-                       approval_id: str | None = None) -> EscalateResult:
+                       approval_id: str | None = None, trace: dict | None = None) -> EscalateResult:
     """Run the graph, asking ``confirm`` with the proposal when it pauses."""
     graph = build_escalate_graph(mcp)
-    config = {"configurable": {"thread_id": uuid.uuid4().hex}}
+    config = {"configurable": {"thread_id": uuid.uuid4().hex}, **(trace or {})}
     state = await graph.ainvoke(
         {"ticket_id": ticket_id, "reason": reason, "approval_id": approval_id}, config)
     while "__interrupt__" in state:

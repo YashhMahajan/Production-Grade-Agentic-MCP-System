@@ -149,6 +149,10 @@ services:
       SCOUT_DRAFT_MAX_LLM_CALLS: ${SCOUT_DRAFT_MAX_LLM_CALLS:-3}
       SCOUT_LLM_DAILY_LIMIT: ${SCOUT_LLM_DAILY_LIMIT:-40}
       SCOUT_ALLOW_FREE_LLM: ${SCOUT_ALLOW_FREE_LLM:-0}
+      SCOUT_LANGSMITH: ${SCOUT_LANGSMITH:-0}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-scout-copilot}
+      SCOUT_TRACE_SALT: ${SCOUT_TRACE_SALT:-}
     depends_on:
       scout-mcp: { condition: service_healthy }
       keycloak: { condition: service_healthy }

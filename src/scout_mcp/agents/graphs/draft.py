@@ -39,6 +39,6 @@ def build_draft_graph(run: DraftRun):
 
 async def run_draft(mcp, models: list, customer_id: str, question: str, now: datetime,
                     max_llm_calls: int = 3, timeout_s: float | None = None,
-                    sla: TenantSla | None = None) -> DraftResult:
+                    sla: TenantSla | None = None, trace: dict | None = None) -> DraftResult:
     run = DraftRun(mcp=mcp, models=models, now=now, max_llm_calls=max_llm_calls, timeout_s=timeout_s, sla=sla)
-    return await execute(run, _front(run), customer_id, question)
+    return await execute(run, _front(run), customer_id, question, trace)
